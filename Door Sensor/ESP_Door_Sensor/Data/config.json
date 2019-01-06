@@ -1,0 +1,2 @@
+{"mqtt_server":"192.168.1.100","mqtt_user":"mqtt_client","mqtt_pswd":"Mosquitto2@","mqtt_client_name":"terrace_door","mqtt_payload_topic":"home/terrace_door/status","mqtt_availability_topic":"home/terrace_door/availability","mqtt_vcc_topic":"home/terrace_door/vcc","mqtt_version_topic":"home/terrace_door/version","ip_address":"192.168.1.52"
+}
