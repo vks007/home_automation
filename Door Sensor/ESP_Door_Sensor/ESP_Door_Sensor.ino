@@ -1,4 +1,6 @@
 /*
+ * NOTE IMPORTANT : BUILD SETTINGS : File Size: 512K with 32K SPIFFS for ESP01 or choose similar size for ESP12
+ * 1.4.1 - removed config of individual topics , rather only take main topic and hard code subsequent paths. Also included more messages to be logged on MQ Broker , like TESTING mode etc
  * 1.4.0 - makes user configuration configurable via a config file (as in Version 1.0)
  * 1.3 - Implements receiving message type from ATTiny on Rx/Tx pins via a 2 bit code
  * Works with ATTiny door sensor V 1.3 onwards
@@ -11,8 +13,8 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
 
-#define TESTING_MODE //used to prevent using Rx & Tx as input pins , rather use them as normal serial pins for debugging , comment this out during normal operation
-#define DEBUG //BEAWARE that this statement should be before #include <DebugMacros.h> else the macros wont work as they are based on this #define
+//#define TESTING_MODE //used to prevent using Rx & Tx as input pins , rather use them as normal serial pins for debugging , comment this out during normal operation
+//#define DEBUG //BEAWARE that this statement should be before #include <DebugMacros.h> else the macros wont work as they are based on this #define
 #include <DebugMacros.h>
 
 //Types of messages decoded via the signal pins
@@ -33,17 +35,14 @@
 
 ADC_MODE(ADC_VCC);//connects the internal ADC to VCC pin and enables measuring Vcc
 
-char VERSION[] = "1.4.0";
+char VERSION[] = "1.4.1";
 //User configuration section
 char mqtt_server[16] = "";//IP address of the MQTT server
 const short mqtt_port = 1883;
 char mqtt_user[20] = "";//username to connect to MQTT server
 char mqtt_pswd[20] = "";//password to connect to MQTT server
 char mqtt_client_name[20] = "_sensor";//Main_Door_sensor // Client connections cant have the same connection name
-char mqtt_payload_topic[50] = ""; //eg:"home/main_door/status";
-char mqtt_availability_topic[50] = ""; //eg:"home/main_door/availability"
-char mqtt_vcc_topic[50] = "";//eg:"home/main_door/vcc"
-char mqtt_version_topic[50] = "";//eg:"home/main_door/version"
+char mqtt_topic[50] = ""; //eg:"home/main_door";
 char ip_address[16] = ""; //static IP to be assigned to the chip eg 192.168.1.60
 //User configuration section
 
@@ -172,18 +171,34 @@ void publishMessage(short msg_type) {
     // Attempt to connect
     if (client.connect(mqtt_client_name,mqtt_user,mqtt_pswd)) {
       DPRINTLN("connected");
+      char publish_topic[65] = ""; //variable accomodates 50 characters of main topic + 15 char of sub topic
+      strcpy(publish_topic,mqtt_topic);
+      strcat(publish_topic,"/status"); 
       if(msg_type == SENSOR_OPEN)
-        client.publish(mqtt_payload_topic, MSG_ON);
+        client.publish(publish_topic, MSG_ON);
       else if(msg_type == SENSOR_CLOSED)
-        client.publish(mqtt_payload_topic, MSG_OFF);
+        client.publish(publish_topic, MSG_OFF);
 
-      client.publish(mqtt_availability_topic, "online");
+      strcpy(publish_topic,mqtt_topic);
+      strcat(publish_topic,"/availability"); 
+      client.publish(publish_topic, "online");
+
       //measure batery voltage and publish that too
       int battery_Voltage = ESP.getVcc();
       char batt_volt[6];
       itoa(battery_Voltage, batt_volt, 10);
-      client.publish(mqtt_vcc_topic, batt_volt);
-      client.publish(mqtt_version_topic, VERSION);
+
+      short testing_mode = 0;
+      #ifdef TESTING_MODE
+        testing_mode = 1;
+      #endif
+
+      //I follow google style naming convention for json which is camelCase
+      String state_json = String("{\"upTime\":") + millis() + String(",\"vcc\":") + batt_volt + String(",\"version\":\"") + VERSION + String("\",\"testingMode\":") + testing_mode + \
+      String(",\"ssid\":\"") + WiFi.SSID() + String("\"}");
+      strcpy(publish_topic,mqtt_topic);
+      strcat(publish_topic,"/state"); 
+      client.publish(publish_topic, state_json.c_str());
       DPRINTLN("published messages");
     } 
     else 
@@ -208,10 +223,7 @@ void startupAP()
   WiFiManagerParameter custom_mqtt_user("mqtt_user", "MQTT user", mqtt_user, 20);
   WiFiManagerParameter custom_mqtt_pswd("mqtt_pswd", "MQTT password", mqtt_pswd, 20);
   WiFiManagerParameter custom_mqtt_client_name("mqtt_client_name", "MQTT Client Name", mqtt_client_name, 20);
-  WiFiManagerParameter custom_mqtt_topic("mqtt_payload_topic", "MQTT Main Topic", mqtt_payload_topic, 50);
-  WiFiManagerParameter custom_mqtt_topic_availability("mqtt_availability_topic", "MQTT Availability Topic", mqtt_availability_topic, 50);
-  WiFiManagerParameter custom_mqtt_vcc_topic("mqtt_vcc_topic", "MQTT Vcc Topic", mqtt_vcc_topic, 50);
-  WiFiManagerParameter custom_mqtt_version_topic("mqtt_version_topic", "MQTT Version Topic", mqtt_version_topic, 50);
+  WiFiManagerParameter custom_mqtt_topic("mqtt_topic", "MQTT Main Topic", mqtt_topic, 50);
   WiFiManagerParameter custom_ip_address("ip_address", "Chip Static IP Address", ip_address, 16);
 
   //Local intialization. Once its business is done, there is no need to keep it around
@@ -225,9 +237,6 @@ void startupAP()
   wifiManager.addParameter(&custom_mqtt_pswd);
   wifiManager.addParameter(&custom_mqtt_client_name);
   wifiManager.addParameter(&custom_mqtt_topic);
-  wifiManager.addParameter(&custom_mqtt_topic_availability);
-  wifiManager.addParameter(&custom_mqtt_vcc_topic);
-  wifiManager.addParameter(&custom_mqtt_version_topic);
   wifiManager.addParameter(&custom_ip_address);
 
   //reset settings - for testing
@@ -261,10 +270,7 @@ void startupAP()
   strcpy(mqtt_user,custom_mqtt_user.getValue());
   strcpy(mqtt_pswd,custom_mqtt_pswd.getValue());
   strcpy(mqtt_client_name,custom_mqtt_client_name.getValue());
-  strcpy(mqtt_payload_topic,custom_mqtt_topic.getValue());
-  strcpy(mqtt_availability_topic,custom_mqtt_topic_availability.getValue());
-  strcpy(mqtt_vcc_topic,custom_mqtt_vcc_topic.getValue());
-  strcpy(mqtt_version_topic,custom_mqtt_version_topic.getValue());
+  strcpy(mqtt_topic,custom_mqtt_topic.getValue());
   strcpy(ip_address,custom_ip_address.getValue());
 
 
@@ -277,10 +283,7 @@ void startupAP()
     json["mqtt_user"] = mqtt_user;
     json["mqtt_pswd"] = mqtt_pswd;
     json["mqtt_client_name"] = mqtt_client_name;
-    json["mqtt_payload_topic"] = mqtt_payload_topic;
-    json["mqtt_availability_topic"] = mqtt_availability_topic;
-    json["mqtt_vcc_topic"] = mqtt_vcc_topic;
-    json["mqtt_version_topic"] = mqtt_version_topic;
+    json["mqtt_topic"] = mqtt_topic;
     json["ip_address"] = ip_address;
 
     File configFile = SPIFFS.open("/config.json", "w");
@@ -322,15 +325,12 @@ bool readConfig()
           strcpy(mqtt_user,json["mqtt_user"]);
           strcpy(mqtt_pswd,json["mqtt_pswd"]);
           strcpy(mqtt_client_name,json["mqtt_client_name"]);
-          strcpy(mqtt_payload_topic,json["mqtt_payload_topic"]);
-          strcpy(mqtt_availability_topic,json["mqtt_availability_topic"]);
-          strcpy(mqtt_vcc_topic,json["mqtt_vcc_topic"]);
-          strcpy(mqtt_version_topic,json["mqtt_version_topic"]);
+          strcpy(mqtt_topic,json["mqtt_topic"]);
           strcpy(ip_address,json["ip_address"]);
           
           DPRINTLN(ip_address);
           //All these values are mandatory for the program to proceed, if any of them is blank , return failure
-          if(mqtt_server == "" || mqtt_user == ""  || mqtt_pswd == "" || mqtt_client_name == "" || mqtt_payload_topic == "" || mqtt_availability_topic == "" || mqtt_vcc_topic == "" || mqtt_version_topic == "" || ip_address == ""){
+          if(mqtt_server == "" || mqtt_user == ""  || mqtt_pswd == "" || mqtt_client_name == "" || mqtt_topic == "" || ip_address == ""){
             DPRINTLN("Mandatory config values are blank");
             return false;
           }
@@ -366,5 +366,3 @@ void loop()
   DPRINTLN("in loop");
   delay(2000);
 }
-
-
