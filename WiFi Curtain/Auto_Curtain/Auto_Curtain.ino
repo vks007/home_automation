@@ -12,19 +12,22 @@
 #include <ESP8266WebServer.h>
 #include <Servo.h>
 #include <ArduinoOTA.h>
-#include <Automaton.h>
 #include <FS.h>
-#include <SoftwareSerial.h>
+//#include <SoftwareSerial.h>
+#include <Wire.h>
 
-#define DEBUG
+//#define DEBUG
 #define VERSION 1.52
 #define HOSTNAME "MBRCurtain_" //< Hostname. The setup function adds the Chip ID at the end.
 #define ENCODER_WAIT_TIME 3000 //time in ms
 #define DEBOUNCE_INTERVAL 300 //time in ms
 #define INIT_ENCODER_VALUE 9999 //Initial value to detect that we havent read any values from the encoder yet
+#define TOLERANCE_STEPS 50 //no of steps which we can miss before taking a deciion to stop the motor
+#define SDA_PIN D6
+#define SCL_PIN D7
 
-const char *ssid = "EAGLE"; //SSID of WiFi to connect to
-const char *password = "HELLO99020"; //Password of WiFi to connect to
+const char *ssid = "EAGLE_EXT"; //SSID of WiFi to connect to
+const char *password = "HELLO99021"; //Password of WiFi to connect to
 
 bool servoRunning = false;
 bool curtainDirectionUp = true;
@@ -39,16 +42,16 @@ unsigned long lastEncoderTime = 0;//stores the last time we detected a change in
 short MOTOR_PIN = D5;//pin on which motor for curtain is attached
 short MOVE_UP_PIN = D1;//input pin to move curtain up
 short MOVE_DN_PIN = D2;//input pin to move curtain down
-short ENCODER_RX_PIN = D6;//ESP receives the encoder positions from the ATiny on this pin and can be read off via a Software Serial
-short ENCODER_TX_PIN = D7;//ESP receives the encoder positions from the ATiny on this pin and can be read off via a Software Serial
+//short ENCODER_RX_PIN = D6;//ESP receives the encoder positions from the ATiny on this pin and can be read off via a Software Serial
+//short ENCODER_TX_PIN = D7;//ESP receives the encoder positions from the ATiny on this pin and can be read off via a Software Serial
 short CURTAIN_TOP_PIN = D4;//Pin to sense if the curtain has reached at its top end - a signal for emegency stop and reset the curtain as something seems to have gone wrong.
 
-int encoderPosition = INIT_ENCODER_VALUE;
-int lastEncoderPosition = INIT_ENCODER_VALUE;
-int curtainMaxSteps = 200; // maximum no of steps that the curtain can move before it stops.This value is actually picked form the config file on the ESP, not here, but just in case
-int currentStepPosition = 0;//maintains the no of steps that the servo has moved , One full round consists of 23 steps by the encoder I am using.
-bool crashRecovery = false;//indicates if ESP has recovered from a power off/crash while the curtain was in motion
-int tmp_interval = 0;
+int16_t encoderPosition = INIT_ENCODER_VALUE;
+int16_t lastEncoderPosition = INIT_ENCODER_VALUE;
+short curtainMaxSteps = 200; // maximum no of steps that the curtain can move before it stops.This value is actually picked form the config file on the ESP, not here, but just in case
+short currentStepPosition = 0;//maintains the no of steps that the servo has moved , One full round consists of 23 steps by the encoder I am using.
+bool crashRecovery = false;//crashRecovery = true indicates that the ESP has recovered from a power off/crash while the curtain was in motion
+int16_t tmp_interval = 0;
 
 struct state{
   short steps;
@@ -60,7 +63,7 @@ state last_state; //stores the last state that was saved to the file
 
 Servo myservo;
 std::unique_ptr<ESP8266WebServer> httpServer; //Ref : https://gist.github.com/tzapu/ecc0759829d30d5a6152
-SoftwareSerial ESPserial(ENCODER_RX_PIN, ENCODER_TX_PIN); // RX | TX
+//SoftwareSerial ESPserial(ENCODER_RX_PIN, ENCODER_TX_PIN); // RX | TX
 
 const char rootHTML[] PROGMEM = R"=====(
 <!DOCTYPE html>
@@ -153,6 +156,17 @@ function curtainReset()
 </html>
 )=====";
 
+//CAUTION: These ISR functions have to be defined before you use them in the attachInterrupt in setup()
+void ICACHE_RAM_ATTR ISRCurtainUp()
+{ btnUp = true;}
+
+
+void ICACHE_RAM_ATTR ISRCurtainDn()
+{ btnDn = true; }
+
+void ICACHE_RAM_ATTR ISRCurtainTop()
+{ btnTop = true; }
+
 
 void setup() {
   #if defined(DEBUG)
@@ -161,13 +175,13 @@ void setup() {
   #endif
 
   //This Serial is to get the encoder data from the AVR, encoder measurement is done by a AVR , not ESP
-  ESPserial.begin(9600);
+//  ESPserial.begin(9600);
   debugln("");
 
   pinMode(MOVE_UP_PIN,INPUT);
   pinMode(MOVE_DN_PIN,INPUT);
-  pinMode(ENCODER_RX_PIN,INPUT);
-  pinMode(ENCODER_TX_PIN,INPUT);//This pin is not used but required for ESPSerial
+//  pinMode(ENCODER_RX_PIN,INPUT);
+//  pinMode(ENCODER_TX_PIN,INPUT);//This pin is not used but required for ESPSerial
   pinMode(MOTOR_PIN,OUTPUT);
   pinMode(CURTAIN_TOP_PIN,INPUT);
 
@@ -214,7 +228,13 @@ void setup() {
   attachInterrupt(MOVE_UP_PIN, ISRCurtainUp, FALLING);
   attachInterrupt(MOVE_DN_PIN, ISRCurtainDn, FALLING);
   attachInterrupt(CURTAIN_TOP_PIN, ISRCurtainTop, LOW);
+
+  //Initialize the Wire I2C setup
+  Wire.begin(SDA_PIN, SCL_PIN);        // join i2c bus (address optional for master)
+  Wire.setClockStretchLimit(1500);
+  
 }
+
 
 void WiFiSetup()
 {
@@ -361,42 +381,38 @@ void loop() {
 
 void updateEncoder()
 {
-  static String tmp = "";
-  static short sign = 1;
-  tmp = "";
-  sign = 1;
-  if ( ESPserial.available() )   
-  {  
-    tmp = ESPserial.readStringUntil('\n');
-    debugln("tmp:" + tmp);
-    if(isSignedNumeric(tmp))
-    {
-      if(tmp.startsWith("-"))
-      {
-          sign = -1;
-          tmp.replace("-","");
-      }
-      encoderPosition = tmp.toInt();
-      encoderPosition *= sign;
+  Wire.requestFrom(8, 2);    // request 2 bytes from slave device #8
+  byte i =0;
+  int16_t readout = 0;
+
+  while (Wire.available()) 
+  { // slave may send less than requested
+    byte c = Wire.read(); // receive a byte as character
+    
+    if (i == 0) {//first byte
+        readout = c;
+    } else { //second byte
+        readout = readout << 8;
+        readout = readout + c;
     }
-    else //We will come here is we have recieved some input from encoder but it has junk characters in it.
-    {
-      //As a hack update the timestamp here so that the curtain doesnt auto stop, hoping we will get a valid encoder input soon enough
-      //If this assumption is not true then we have a potential problem !!!!!!!!!!!WARNING !!!!!!!!!!!!!!!!!!!!!!!!!
-      lastEncoderTime = millis();//update the timestamp as we've received a change in encoder value
-    }
-    //Serial.println(encoderPosition);
+    i++;
   }
+    
+  debugln("readout:" + readout);
+  if(readout < (encoderPosition + TOLERANCE_STEPS) && readout > (encoderPosition - TOLERANCE_STEPS) )
+  {
+    encoderPosition += readout;
+  }
+  else //We will come here is we have recieved an input from encoder which is not within the range we expect it to be, this could also be due to junk characters
+  {
+    //As a hack update the timestamp here so that the curtain doesnt auto stop, hoping we will get a valid encoder input soon enough
+    //If this assumption is not true then we have a potential problem !!!!!!!!!!!WARNING !!!!!!!!!!!!!!!!!!!!!!!!!
+    lastEncoderTime = millis();//update the timestamp as we've received a change in encoder value
+  }
+    //Serial.println(encoderPosition);
 }
 
-void ISRCurtainUp()
-{ btnUp = true;}
 
-void ISRCurtainDn()
-{ btnDn = true; }
-
-void ISRCurtainTop()
-{ btnTop = true; }
 
 void curtainUp()
 {
