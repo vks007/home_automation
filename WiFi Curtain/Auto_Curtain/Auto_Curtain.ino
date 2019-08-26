@@ -7,6 +7,14 @@
  * 1.3 - modifying program to send signals for renewal of ON time rather than wait for the stop signal. Changed Hostname
  * 1.4 - modifyied to include stopping of curtain based on encoder inputs
  * 
+ * TO DO
+ * implement a hardware reset using the long press of any of the UP or DOWN buttons
+ * Implement a LED indicator to indicate : crash mode, movement , milestones liek bottom or top etc
+ * Dont go into crash mode automatically after a power outage - it can lead to user unknowingly pressing UP or DOWN in crash mode and expecting it to stop automatically
+ * implement the Top end reed switch - hardwre only, software is in place 
+ * implement secrets file
+ * connect reset of ESP with reset of ATTiny so that both gets reset when we press the reset on ESP
+ * implement working based on MQTT messages so that it can be integrated in Home Assistant
 */
 
 #include <ESP8266WiFi.h>
@@ -20,7 +28,7 @@
 #define DEBUG // this statement should be before the include statement for Debugutils.h
 #include "Debugutils.h"
 
-#define VERSION 1.55
+#define VERSION 1.56
 #define HOSTNAME "MBRCurtain_" //< Hostname. The setup function adds the Chip ID at the end.
 #define ENCODER_WAIT_TIME 1000 //time in ms
 #define DEBOUNCE_INTERVAL 300 //time in ms
@@ -30,12 +38,13 @@
                              // 1=> Clockwise will decrease encoder count and anti clockwise will increase encoder count
 
 //PIN Definitions
-#define MOVE_UP_PIN D1 //input pin to move curtain up
-#define MOVE_DN_PIN D2 //input pin to move curtain down
+#define MOVE_UP_PIN D2 //input pin to move curtain up
+#define MOVE_DN_PIN D1 //input pin to move curtain down
 #define CURTAIN_TOP_PIN D4 //Pin to sense if the curtain has reached at its top end - a signal for emegency stop and reset the curtain as something seems to have gone wrong.
 #define MOTOR_PIN D5 //pin on which motor for curtain is attached
 #define SDA_PIN D6
 #define SCL_PIN D7
+#define STATUS_LED_PIN D3
 
 //to shift this to secrets file or use WiFimanager 
 const char *ssid = "EAGLE_EXT"; //SSID of WiFi to connect to
@@ -45,7 +54,8 @@ bool servoRunning = false;
 bool curtainDirectionUp = true;
 volatile bool btnUp = false;//push button to trigger a curtain to move up
 volatile bool btnDn = false;//push button to trigger a curtain to move down
-volatile bool btnTop = false;//monitors if the curtain has reached the extreme top position, normally this should never be the case. monitored via a hall sensor
+volatile bool btnTop = false;//monitors if the curtain has reached the extreme top position, This is the last check in case the curtain does not adhere to the defined virtual limits. 
+                              //It is monitored via a hall sensor. It will be initialized accoridng to the state of the CURTAIN_TOP_PIN in setup()
 unsigned long lastDebounceTimeUp = 0;
 unsigned long lastDebounceTimeDn = 0;
 unsigned long lastEncoderTime = 0;//stores the last time we detected a change in the encoder reading
@@ -172,7 +182,7 @@ void ICACHE_RAM_ATTR ISRCurtainDn()
 { btnDn = true; }
 
 void ICACHE_RAM_ATTR ISRCurtainTop()
-{ btnTop = true; }
+{ btnTop = !digitalRead(CURTAIN_TOP_PIN);}
 
 
 void setup() {
@@ -186,6 +196,7 @@ void setup() {
   pinMode(MOVE_DN_PIN,INPUT);
   pinMode(MOTOR_PIN,OUTPUT);
   pinMode(CURTAIN_TOP_PIN,INPUT);
+  pinMode(STATUS_LED_PIN,OUTPUT);
 
   WiFiSetup();
 
@@ -225,17 +236,22 @@ void setup() {
     DEBUG_PRINTLN("Entering crash recovery mode....");
     crashRecovery = true;
   }
-  //crashRecovery = true;
+  //Initialize the btnTop variable according to the position of the TOP SWITCH
+  btnTop = !digitalRead(CURTAIN_TOP_PIN);
   
   //Attach the interrupts on input pins as the last step
   attachInterrupt(MOVE_UP_PIN, ISRCurtainUp, FALLING);
   attachInterrupt(MOVE_DN_PIN, ISRCurtainDn, FALLING);
-  attachInterrupt(CURTAIN_TOP_PIN, ISRCurtainTop, LOW);
+  attachInterrupt(CURTAIN_TOP_PIN, ISRCurtainTop, CHANGE);
 
   //Initialize the Wire I2C setup
   Wire.begin(SDA_PIN, SCL_PIN);        // join i2c bus (address optional for master)
   Wire.setClockStretchLimit(1500);
-  
+
+  //Blink once to indicate we've completed setup
+  setLED(1);
+  delay(1000);
+  setLED(0);
 }
 
 
@@ -378,9 +394,35 @@ void loop() {
     }
   }
 
- 
+  if(crashRecovery)
+  {
+    setLED(500); //blink every 500ms
+  }
+  else if(servoRunning)
+    setLED(1000);
+  //LED is set to OFF in curtainStop() as it is called when curtain stops and when crashRecovery ends
 }
 
+
+/*
+ * sets the status of the LED as either ON / OFF / Blinking
+ * interval = 0 - OFF , interval = 1 - ON , interval > 1 : Blink LED at the interval (ms)
+ */
+void setLED(int interval)
+{
+  long static elapsedTime = 0;
+  bool static led_state = HIGH;
+  if(interval == 0)
+      digitalWrite(STATUS_LED_PIN,HIGH); //OFF
+  else if(interval == 1)
+      digitalWrite(STATUS_LED_PIN,LOW); //ON
+  else if((millis() - elapsedTime) > interval)
+  {
+    digitalWrite(STATUS_LED_PIN,!led_state);
+    elapsedTime = millis();
+    led_state = !led_state;
+  }
+}
 
 void updateEncoder()
 {
@@ -478,6 +520,7 @@ void curtainStop()
     updateEncoder();//update the final stopped encoder position 
     state curr_state = {.steps = currentStepPosition, .isRunning = servoRunning, .maxSteps = curtainMaxSteps};
     saveCurrentState(curr_state);
+    setLED(0);//turn the LED OFF
     DEBUG_PRINTLN("Curtain stopped at position:");DEBUG_PRINTLN(String(currentStepPosition));
 }
 
@@ -661,7 +704,13 @@ void handleDebug()
   strHTML += String(crashRecovery) + "</p>";
   strHTML += "<p>max Steps: ";
   strHTML += String(curtainMaxSteps) + "</p>";
-  
+  strHTML += "<p>btnTop: ";
+  strHTML += String(btnTop) + "</p>";
+  strHTML += "<p>servoRunning: ";
+  strHTML += String(servoRunning) + "</p>";
+  strHTML += "<p>curtainDirectionUp: ";
+  strHTML += String(curtainDirectionUp) + "</p>";
+
   strHTML += "</body></html>";
   httpServer->send ( 200, "text/html",  strHTML);
  
