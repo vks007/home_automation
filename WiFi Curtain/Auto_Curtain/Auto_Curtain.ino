@@ -7,14 +7,17 @@
  * 1.3 - modifying program to send signals for renewal of ON time rather than wait for the stop signal. Changed Hostname
  * 1.4 - modifyied to include stopping of curtain based on encoder inputs
  * 
+ * DONE features:
+ * Implement a LED indicator to indicate : crash mode, movement , milestones liek bottom or top etc
+ * 
  * TO DO
  * implement a hardware reset using the long press of any of the UP or DOWN buttons
- * Implement a LED indicator to indicate : crash mode, movement , milestones liek bottom or top etc
  * Dont go into crash mode automatically after a power outage - it can lead to user unknowingly pressing UP or DOWN in crash mode and expecting it to stop automatically
  * implement the Top end reed switch - hardwre only, software is in place 
  * implement secrets file
  * connect reset of ESP with reset of ATTiny so that both gets reset when we press the reset on ESP
  * implement working based on MQTT messages so that it can be integrated in Home Assistant
+ * implement seeing the status of the curtain and current step position on the web page using sockets
 */
 
 #include <ESP8266WiFi.h>
@@ -24,11 +27,12 @@
 #include <ArduinoOTA.h>
 #include <FS.h>
 #include <Wire.h>
+#include "secrets.h" //This file is located in the Sketches\libraries\MyFiles folder
 
 #define DEBUG // this statement should be before the include statement for Debugutils.h
-#include "Debugutils.h"
+#include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
 
-#define VERSION 1.56
+#define VERSION 1.57
 #define HOSTNAME "MBRCurtain_" //< Hostname. The setup function adds the Chip ID at the end.
 #define ENCODER_WAIT_TIME 1000 //time in ms
 #define DEBOUNCE_INTERVAL 300 //time in ms
@@ -40,15 +44,15 @@
 //PIN Definitions
 #define MOVE_UP_PIN D2 //input pin to move curtain up
 #define MOVE_DN_PIN D1 //input pin to move curtain down
-#define CURTAIN_TOP_PIN D4 //Pin to sense if the curtain has reached at its top end - a signal for emegency stop and reset the curtain as something seems to have gone wrong.
-#define MOTOR_PIN D5 //pin on which motor for curtain is attached
+#define CURTAIN_TOP_PIN D5 //Pin to sense if the curtain has reached at its top end - a signal for emegency stop and reset the curtain as something seems to have gone wrong.
+#define MOTOR_PIN D0 //pin on which motor for curtain is attached
 #define SDA_PIN D6
 #define SCL_PIN D7
 #define STATUS_LED_PIN D3
 
 //to shift this to secrets file or use WiFimanager 
-const char *ssid = "EAGLE_EXT"; //SSID of WiFi to connect to
-const char *password = "HELLO99021"; //Password of WiFi to connect to
+const char *ssid = SSID1; //SSID of WiFi to connect to
+const char *password = SSID1_PSWD; //Password of WiFi to connect to
 
 bool servoRunning = false;
 bool curtainDirectionUp = true;
@@ -396,10 +400,10 @@ void loop() {
 
   if(crashRecovery)
   {
-    setLED(500); //blink every 500ms
+    setLED(250); //blink every 500ms
   }
   else if(servoRunning)
-    setLED(1000);
+    setLED(500);
   //LED is set to OFF in curtainStop() as it is called when curtain stops and when crashRecovery ends
 }
 
