@@ -15,7 +15,7 @@
 
 //#define TESTING_MODE //used to prevent using Rx & Tx as input pins , rather use them as normal serial pins for debugging , comment this out during normal operation
 //#define DEBUG //BEAWARE that this statement should be before #include <DebugMacros.h> else the macros wont work as they are based on this #define
-#include <DebugMacros.h>
+#include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
 
 //Types of messages decoded via the signal pins
 #define WAKEUP 1
@@ -35,7 +35,7 @@
 
 ADC_MODE(ADC_VCC);//connects the internal ADC to VCC pin and enables measuring Vcc
 
-char VERSION[] = "1.4.1";
+char VERSION[] = "1.4.2";
 //User configuration section
 char mqtt_server[16] = "";//IP address of the MQTT server
 const short mqtt_port = 1883;
@@ -49,6 +49,7 @@ char ip_address[16] = ""; //static IP to be assigned to the chip eg 192.168.1.60
 WiFiClient espClient;
 PubSubClient client(espClient);
 bool shouldSaveConfig = false; //flag for saving data
+
 
 void setup() 
 {
@@ -84,6 +85,9 @@ void setup()
     client.setServer(mqtt_server, mqtt_port);
     //TO DO : you can read the input values in a single statement directly from registers and then compare using a mask
     // TO DO : Shift the reading of pins to before reading config so that even if ATTiny removes the signal, ESP can still take its own time in publishing the message
+    // TO DO : I think the best way would be to set up interrupts on the signal pins and then keep pushing any change in values into an array
+    // then loop through the array and publish the messages accordingly. At present values are changing too fast for the ESP to publish and go back and read new values
+    // due to which I am missing door sttaus changes
     //Publish the message according to the type of message received
 
     #ifdef TESTING_MODE
@@ -195,7 +199,7 @@ void publishMessage(short msg_type) {
 
       //I follow google style naming convention for json which is camelCase
       String state_json = String("{\"upTime\":") + millis() + String(",\"vcc\":") + batt_volt + String(",\"version\":\"") + VERSION + String("\",\"testingMode\":") + testing_mode + \
-      String(",\"ssid\":\"") + WiFi.SSID() + String("\"}");
+      String(",\"IPAddr\":\"") + WiFi.localIP().toString() + String("\"}");
       strcpy(publish_topic,mqtt_topic);
       strcat(publish_topic,"/state"); 
       client.publish(publish_topic, state_json.c_str());
