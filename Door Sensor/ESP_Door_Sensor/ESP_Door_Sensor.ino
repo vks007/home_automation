@@ -35,7 +35,7 @@
 
 ADC_MODE(ADC_VCC);//connects the internal ADC to VCC pin and enables measuring Vcc
 
-char VERSION[] = "1.4.2";
+char VERSION[] = "1.4.2"; 
 //User configuration section
 char mqtt_server[16] = "";//IP address of the MQTT server
 const short mqtt_port = 1883;
