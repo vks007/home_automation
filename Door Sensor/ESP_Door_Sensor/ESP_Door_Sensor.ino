@@ -18,7 +18,8 @@
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
 
 //Types of messages decoded via the signal pins
-#define WAKEUP 1
+#define SENSOR_NONE 0
+#define SENSOR_WAKEUP 1
 #define SENSOR_OPEN 2
 #define SENSOR_CLOSED 3
 #define MAX_MQTT_CONNECT_RETRY 4 //max no of retries to connect to MQTT server
@@ -27,7 +28,7 @@
 #define HOLD_PIN 0  // defines GPIO0 as the hold pin (will hold CH_PD high untill we power down).
 #define SIGNAL_PIN0 1 //Bit 1 of the signal which indicates the message type
 #define SIGNAL_PIN1 3 //Bit 2 of the signal which indicates the message type
-//State Mapping of SIGNAL_PIN0 SIGNAL_PIN1:: 11=>IDLE , 00=> WAKEUP , 01=> SENSOR OPEN , 10=> SENSOR CLOSED
+//State Mapping of SIGNAL_PIN0 SIGNAL_PIN1:: 11=>IDLE , 00=> SENSOR_WAKEUP , 01=> SENSOR OPEN , 10=> SENSOR CLOSED
 #define CONFIG_PIN 2 //This is used to put the ESP into AP config mode, normally HIGH , LOW when in Config mode
 #define MSG_ON "on" //payload for ON
 #define MSG_OFF "off"//payload for OFF
@@ -35,7 +36,7 @@
 
 ADC_MODE(ADC_VCC);//connects the internal ADC to VCC pin and enables measuring Vcc
 
-char VERSION[] = "1.4.2"; 
+char VERSION[] = "1.4.3"; 
 //User configuration section
 char mqtt_server[16] = "";//IP address of the MQTT server
 const short mqtt_port = 1883;
@@ -56,6 +57,9 @@ void setup()
   DBEGIN(115200);
   pinMode(HOLD_PIN, OUTPUT);
   digitalWrite(HOLD_PIN, HIGH);  // sets GPIO0 to high (this holds CH_PD high even if the input signal goes LOW)
+
+  short CURR_MSG = SENSOR_NONE; //This stores the message type deciphered from the states of the signal pins
+  short PREV_MSG = SENSOR_NONE; //This stores the message type deciphered from the states of the signal pins
 
   #ifndef TESTING_MODE
   if(SIGNAL_PIN0 == 1 || SIGNAL_PIN0 == 3)
@@ -91,18 +95,36 @@ void setup()
     //Publish the message according to the type of message received
 
     #ifdef TESTING_MODE
-      publishMessage(WAKEUP);
+      CURR_MSG = SENSOR_WAKEUP;
     #else
-
     if((digitalRead(SIGNAL_PIN0) == LOW) && (digitalRead(SIGNAL_PIN1) == LOW))
-      publishMessage(WAKEUP);//WAKEUP
+      CURR_MSG = SENSOR_WAKEUP;
     else if((digitalRead(SIGNAL_PIN0) == LOW) && (digitalRead(SIGNAL_PIN1) == HIGH))
-      publishMessage(SENSOR_OPEN);
+      CURR_MSG = SENSOR_OPEN;
     else if((digitalRead(SIGNAL_PIN0) == HIGH) && (digitalRead(SIGNAL_PIN1) == LOW))
-      publishMessage(SENSOR_CLOSED);
+      CURR_MSG = SENSOR_CLOSED;
     //else nothing to do, invalid mode
     #endif
-    
+
+    while(CURR_MSG != PREV_MSG)
+    {
+      if(CURR_MSG != SENSOR_NONE)
+      {
+        publishMessage(CURR_MSG);
+        //Allow a delay to let MQTT publish the message as the publish method is asyncronous, If I dont put this, the ESP powers down before the msg is published
+        delay(1000);
+      }
+      
+      //Read the sensor again to see if it has changed from last time, if yes then repeat the loop to publish this message
+      PREV_MSG = CURR_MSG;
+      if((digitalRead(SIGNAL_PIN0) == LOW) && (digitalRead(SIGNAL_PIN1) == LOW))
+        CURR_MSG = SENSOR_WAKEUP;
+      else if((digitalRead(SIGNAL_PIN0) == LOW) && (digitalRead(SIGNAL_PIN1) == HIGH))
+        CURR_MSG = SENSOR_OPEN;
+      else if((digitalRead(SIGNAL_PIN0) == HIGH) && (digitalRead(SIGNAL_PIN1) == LOW))
+        CURR_MSG = SENSOR_CLOSED;
+      //else nothing to do, invalid mode
+    }
   }
   else
   {
@@ -128,8 +150,6 @@ void setup()
   }
   
   DPRINTLN("powering down");
-  //Allow a delay to let MQTT publish the message as the publish method is asyncronous, If I dont put this, the ESP powers down before the msg is published
-  delay(1000);
   digitalWrite(HOLD_PIN, LOW);  // set GPIO 0 low this takes CH_PD & powers down the ESP
 }
 

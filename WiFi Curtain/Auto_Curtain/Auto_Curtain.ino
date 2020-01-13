@@ -54,6 +54,13 @@
 const char *ssid = SSID1; //SSID of WiFi to connect to
 const char *password = SSID1_PSWD; //Password of WiFi to connect to
 
+const char* deviceName = "study_curtain";
+//Static IP address configuration
+IPAddress staticIP(192, 168, 1, 67); //ESP static ip
+IPAddress gateway(192, 168, 1, 1);   //IP Address of your WiFi Router (Gateway)
+IPAddress subnet(255, 255, 255, 0);  //Subnet mask
+IPAddress dns(8, 8, 8, 8);  //DNS
+
 bool servoRunning = false;
 bool curtainDirectionUp = true;
 volatile bool btnUp = false;//push button to trigger a curtain to move up
@@ -194,7 +201,7 @@ void setup() {
   Serial.begin(115200);
   delay(1);
 #endif
-  DEBUG_PRINTLN("");
+  DPRINTLN("");
 
   pinMode(MOVE_UP_PIN,INPUT);
   pinMode(MOVE_DN_PIN,INPUT);
@@ -224,20 +231,20 @@ void setup() {
     httpServer->on ("/get",handleGetSavedState);
     httpServer->begin();
 
-    DEBUG_PRINTLN( "HTTP server started" );
+    DPRINTLN( "HTTP server started" );
   }
   
   //Initialize the encoder current position by reading the last values stored in the config file
   state init_state = getCurrentState();
   currentStepPosition = init_state.steps;
   curtainMaxSteps = init_state.maxSteps;
-  DEBUG_PRINTLN("Current steps:" + String(currentStepPosition) + ", maxSteps:" + String(curtainMaxSteps) + " running status:" + String(init_state.isRunning));
-  DEBUG_PRINT("Initial enPos:");DEBUG_PRINT(String(encoderPosition));DEBUG_PRINT(" lstPos:");DEBUG_PRINTLN(String(lastEncoderPosition));
+  DPRINTLN("Current steps:" + String(currentStepPosition) + ", maxSteps:" + String(curtainMaxSteps) + " running status:" + String(init_state.isRunning));
+  DPRINT("Initial enPos:");DPRINT(String(encoderPosition));DPRINT(" lstPos:");DPRINTLN(String(lastEncoderPosition));
 
   //This indicates the ESP crashed/turned off while it was running and hence was not able to store the last step state. This condition is non-recoverable and needs to be flagged so that a reset can be performed
   if(init_state.isRunning)
   {
-    DEBUG_PRINTLN("Entering crash recovery mode....");
+    DPRINTLN("Entering crash recovery mode....");
     crashRecovery = true;
   }
   //Initialize the btnTop variable according to the position of the TOP SWITCH
@@ -261,6 +268,8 @@ void setup() {
 
 void WiFiSetup()
 {
+  WiFi.hostname(deviceName);      // DHCP Hostname (useful for finding device for static lease)
+  WiFi.config(staticIP, subnet, gateway, dns);
   WiFi.mode(WIFI_STA);
   WiFi.begin ( ssid, password );
   
@@ -269,7 +278,7 @@ void WiFiSetup()
     if(WiFi.status() != WL_CONNECTED)
     {
       delay ( 500 );
-        DEBUG_PRINT( "." );
+        DPRINT( "." );
     }
     else
       break;
@@ -277,16 +286,16 @@ void WiFiSetup()
     }
 
   if(WiFi.status() == WL_CONNECTED)
-  {    DEBUG_PRINTLN( "" );DEBUG_PRINT( "Connected to " );DEBUG_PRINTLN( ssid );DEBUG_PRINT( "IP address: " );
-    DEBUG_PRINTLN( WiFi.localIP().toString());//assign a static IP for this ESP's MAC address in the router for faster connection
+  {    DPRINTLN( "" );DPRINT( "Connected to " );DPRINTLN( ssid );DPRINT( "IP address: " );
+    DPRINTLN( WiFi.localIP().toString());//assign a static IP for this ESP's MAC address in the router for faster connection
   }
 
 }
 void OTASetup()
 {
-  DEBUG_PRINTLN("");
-  DEBUG_PRINT("Chip ID: 0x");
-  DEBUG_PRINTLN(String(ESP.getChipId(), HEX));
+  DPRINTLN("");
+  DPRINT("Chip ID: 0x");
+  DPRINTLN(String(ESP.getChipId(), HEX));
   
   // Set Hostname.
   String hostname(HOSTNAME);
@@ -294,8 +303,8 @@ void OTASetup()
   WiFi.hostname(hostname);
 
   // Print hostname.
-  DEBUG_PRINTLN("Hostname: " + hostname);
-  //DEBUG_PRINTLN(WiFi.hostname());
+  DPRINTLN("Hostname: " + hostname);
+  //DPRINTLN(WiFi.hostname());
 
   // Start OTA server
   ArduinoOTA.setHostname((const char *)hostname.c_str());
@@ -310,7 +319,7 @@ void OTASetup()
    ArduinoOTA.onError([](ota_error_t error) { ESP.restart(); });
 
   ArduinoOTA.begin();
-  DEBUG_PRINTLN("OTA Server setup successfully");
+  DPRINTLN("OTA Server setup successfully");
 }
 
 void loop() {
@@ -324,7 +333,7 @@ void loop() {
   if(btnTop == true && servoRunning && curtainDirectionUp)
   {
     curtainStop();
-    DEBUG_PRINTLN("curtain unexpectedly reached the extreme top and hence stopped.");
+    DPRINTLN("curtain unexpectedly reached the extreme top and hence stopped.");
   }
   
   if(servoRunning)
@@ -333,7 +342,7 @@ void loop() {
     if(encoderPosition != lastEncoderPosition)//encoder has moved, servo is running
     {
       lastEncoderTime = millis();//update the timestamp as we've received a change in encoder value
-      DEBUG_PRINT("enPos:");DEBUG_PRINT(String(encoderPosition));DEBUG_PRINT(" lstPos:");DEBUG_PRINT(String(lastEncoderPosition));DEBUG_PRINT(" stepPos:");DEBUG_PRINT(String(currentStepPosition));
+      DPRINT("enPos:");DPRINT(String(encoderPosition));DPRINT(" lstPos:");DPRINT(String(lastEncoderPosition));DPRINT(" stepPos:");DPRINT(String(currentStepPosition));
       //Check if this is the first movement of encoder we have received after startup. if yes then special handling of lastEncoderPosition will have to be done
       if(lastEncoderPosition == INIT_ENCODER_VALUE)
       {
@@ -344,11 +353,11 @@ void loop() {
       }
       
       tmp_interval = (encoderPosition - lastEncoderPosition);
-      DEBUG_PRINTLN("interval:" + String(tmp_interval));
+      DPRINTLN("interval:" + String(tmp_interval));
       currentStepPosition +=  tmp_interval;
       lastEncoderPosition = encoderPosition;
 
-      DEBUG_PRINT(" new stepPos:");DEBUG_PRINTLN(String(currentStepPosition));
+      DPRINT(" new stepPos:");DPRINTLN(String(currentStepPosition));
       //Steps start from max position which is the bottom end of the curtain. Moving up decreases the steps , moving down increases the steps
       if(((currentStepPosition >= curtainMaxSteps) || (currentStepPosition <= 0)) && !crashRecovery)//we've reached the bottom or we've reached the top. Also dont stop automatically if we are in crash recovery mode  
         curtainStop();
@@ -356,7 +365,7 @@ void loop() {
     else if((millis() - lastEncoderTime) > ENCODER_WAIT_TIME)
     {
       curtainStop();
-      DEBUG_PRINTLN("Curtain stopped as no encoder change received for more than " + String(ENCODER_WAIT_TIME) + " ms");
+      DPRINTLN("Curtain stopped as no encoder change received for more than " + String(ENCODER_WAIT_TIME) + " ms");
     }
     
   }
@@ -364,7 +373,7 @@ void loop() {
 
   if(btnUp == true)
   {
-//    DEBUG_PRINTLN("Up button pressed");
+//    DPRINTLN("Up button pressed");
     btnUp = false;
     if(digitalRead(MOVE_UP_PIN) == LOW)//button is pressed
     {
@@ -382,7 +391,7 @@ void loop() {
   
   if(btnDn == true)
   {
-//    DEBUG_PRINTLN("Down button pressed");
+//    DPRINTLN("Down button pressed");
     btnDn = false;
     if(digitalRead(MOVE_DN_PIN) == LOW)//button is pressed
     {
@@ -448,7 +457,7 @@ void updateEncoder()
     i++;
   }
     
-  DEBUG_PRINTLN("readout:" + readout);
+  DPRINTLN("readout:" + readout);
 
   //ENCODER_DIRECTION multiplies readout by +1 or -1 depending on if you want the direction to mean positive or negative values
   encoderPosition = ENCODER_DIRECTION * readout;
@@ -463,10 +472,10 @@ void updateEncoder()
     //As a hack update the timestamp here so that the curtain doesnt auto stop, hoping we will get a valid encoder input soon enough
     //If this assumption is not true then we have a potential problem !!!!!!!!!!!WARNING !!!!!!!!!!!!!!!!!!!!!!!!!
     lastEncoderTime = millis();//update the timestamp as we've received a change in encoder value
-    DEBUG_PRINTLN("ignoring encoder value as it is ouside of acceptable range: " + readout);
+    DPRINTLN("ignoring encoder value as it is ouside of acceptable range: " + readout);
   }
 */
-  DEBUG_PRINTLN("encoderPosition:" + encoderPosition);
+  DPRINTLN("encoderPosition:" + encoderPosition);
 }
 
 
@@ -481,13 +490,13 @@ void curtainUp()
       prepCurtainMove();
       myservo.write(180);
       lastEncoderTime = millis();//initialize the last encoder time as we're starting to move now.
-      DEBUG_PRINTLN("Curtain is moving up");
+      DPRINTLN("Curtain is moving up");
     }
     else
-      DEBUG_PRINTLN("Curtain up command ignored as curtain is at the top");
+      DPRINTLN("Curtain up command ignored as curtain is at the top");
   }
   else
-      DEBUG_PRINTLN("Curtain up command ignored as curtain is at the extreme top");
+      DPRINTLN("Curtain up command ignored as curtain is at the extreme top");
 }
   
 void curtainDn()
@@ -498,10 +507,10 @@ void curtainDn()
     prepCurtainMove();
     myservo.write(0);
     lastEncoderTime = millis();//initialize the last encoder time as we're starting to move now.
-    DEBUG_PRINTLN("Curtain is moving down");
+    DPRINTLN("Curtain is moving down");
   }
   else
-    DEBUG_PRINTLN("Curtain down command ignored as curtain is at the bottom");
+    DPRINTLN("Curtain down command ignored as curtain is at the bottom");
 }
 
 void prepCurtainMove()
@@ -525,7 +534,7 @@ void curtainStop()
     state curr_state = {.steps = currentStepPosition, .isRunning = servoRunning, .maxSteps = curtainMaxSteps};
     saveCurrentState(curr_state);
     setLED(0);//turn the LED OFF
-    DEBUG_PRINTLN("Curtain stopped at position:");DEBUG_PRINTLN(String(currentStepPosition));
+    DPRINTLN("Curtain stopped at position:");DPRINTLN(String(currentStepPosition));
 }
 
 //saves the current state of the curtain position to the memory
@@ -552,11 +561,11 @@ void saveCurrentState(state this_state)
     logF.close();
     //save the current state into the last state variable to compare later
     last_state.steps = this_state.steps;last_state.maxSteps = this_state.maxSteps;last_state.isRunning = this_state.isRunning;
-    DEBUG_PRINTLN("Current state saved to the file");
+    DPRINTLN("Current state saved to the file");
   }
   else
   {
-    DEBUG_PRINTLN("Error opening file. Can't write the status of the curtain");
+    DPRINTLN("Error opening file. Can't write the status of the curtain");
   }
 }
 
@@ -597,7 +606,7 @@ state getCurrentState()
       curr_state.isRunning = (tmp.toInt() == 0?false:true);
   }
   else
-    DEBUG_PRINTLN("Error opening file: /curtain.txt");
+    DPRINTLN("Error opening file: /curtain.txt");
   return curr_state;
 }
 
@@ -645,7 +654,7 @@ void handleReset()
   //lastEncoderPosition = 0;
   crashRecovery = false;//this is to enable saving of current configuraiton
   curtainStop();//although I call call saveCurrentState here but calling stop to be safe in case I get the reset command while servo is running, curtainStop in turn will save the current state.
-  DEBUG_PRINTLN("Reset successfully");  
+  DPRINTLN("Reset successfully");  
   httpServer->send ( 200, "text/html", "Curtain position reset successfully");
 }
 
@@ -691,7 +700,7 @@ void handleGetSavedState()
 void handleCrash()
 {
   crashRecovery = true;//this is to enable saving of current configuraiton
-  DEBUG_PRINTLN("Crash recovery mode set to true");  
+  DPRINTLN("Crash recovery mode set to true");  
   httpServer->send ( 200, "text/html", "Successfully entered crash recovery mode");
 }
 
@@ -750,13 +759,13 @@ bool isSignedNumeric(String str)
 /*
   if(str.length()> 0 && str.charAt(0) == '-')
     str.replace('-','');
-  DEBUG_PRINTLN("str.length2=" + String(str.length()));
+  DPRINTLN("str.length2=" + String(str.length()));
   for(unsigned short i=0;i<str.length();i++)
     if(!isDigit(str.charAt(i)))
-      {DEBUG_PRINT("false");
+      {DPRINT("false");
       return false;}
     else
-      {DEBUG_PRINT("true");}
+      {DPRINT("true");}
 */
 }
 
