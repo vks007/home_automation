@@ -89,11 +89,8 @@ void setup()
     client.setServer(mqtt_server, mqtt_port);
     //TO DO : you can read the input values in a single statement directly from registers and then compare using a mask
     // TO DO : Shift the reading of pins to before reading config so that even if ATTiny removes the signal, ESP can still take its own time in publishing the message
-    // TO DO : I think the best way would be to set up interrupts on the signal pins and then keep pushing any change in values into an array
-    // then loop through the array and publish the messages accordingly. At present values are changing too fast for the ESP to publish and go back and read new values
-    // due to which I am missing door sttaus changes
-    //Publish the message according to the type of message received
 
+    //Read the type of message we've got from the ATiny
     #ifdef TESTING_MODE
       CURR_MSG = SENSOR_WAKEUP;
     #else
