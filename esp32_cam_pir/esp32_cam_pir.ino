@@ -1,13 +1,10 @@
 /*********
   References:
   https://RandomNerdTutorials.com/esp32-cam-video-streaming-web-server-camera-home-assistant/
-  Example mqtt code from examples in https://github.com/marvinroger/async-mqtt-client
-  async mqtt api reference: http://marvinroger.viewdocs.io/async-mqtt-client/2.-API-reference/
   https://github.com/espressif/esp-who/issues/90 - talks about an issue where you cant use attachInterrupt with esp32 cam
 
   Dependencies:
-  AsyncTCP - download from here https://github.com/me-no-dev/AsyncTCP (Note: this is for ESP32 , there is a different one for ESP8266
-  async-mqtt-client - download from here : https://github.com/marvinroger/async-mqtt-client
+  PubSubClient - for MQTT
   
   UPLOAD SETTINGS!!! 
    Board : "ESP32 Wrower Module"
@@ -35,27 +32,35 @@
 #include "secrets.h" //From /libraries/MyFiles/secrets.h
 #include <ESPmDNS.h>
 #include <WiFiUdp.h>
+#include <PubSubClient.h>
+#define DEBUG //BEAWARE that this statement should be before #include <DebugUtils.h> else the macros wont work as they are based on this #define
+#include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
 
 extern "C" {
   #include "freertos/FreeRTOS.h"
   #include "freertos/timers.h"
 }
-#include <AsyncMqttClient.h>
 
-//Replace with your network credentials
-const char* ssid = SSID1;
-const char* password = SSID1_PSWD;
+const char* ssid = SSID2;
+const char* password = SSID2_PSWD;
 const char* deviceName = "ESP32_CAM_PIR";
 
 // MQTT related info
+//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!             ATTENTION                       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+//Will have to see if I can afford to wait for this long a time before retrying the MQTT connection. It might trigger a WDT somewhere or fail the ESP32 CAM code
+#define MAX_MQTT_CONNECT_RETRY 4 //max no of retries to connect to MQTT server
+#define CONNECTION_RETRY_TIME 500 //time in ms to wait before retrying MQTT connection
 #define MQTT_USER MQTT_USER1
 #define MQTT_PASSWORD MQTT_PSWD1
 #define MQTT_HOST MQTT_SERVER1
 #define MQTT_PORT MQTT_PORT1
 #define MQTT_TOPIC "home/camera1/motion"
-AsyncMqttClient mqttClient;
-TimerHandle_t mqttReconnectTimer;
-TimerHandle_t wifiReconnectTimer;
+#define MSG_ON "on" //payload for ON
+#define MSG_OFF "off"//payload for OFF
+char mqtt_client_name[20] = "esp32_cam1"; // Client connections cant have the same connection name
+
+WiFiClient espClient;
+PubSubClient client(espClient);
 
 // Set your Static IP address
 IPAddress local_IP(192, 168, 1, 62);
@@ -64,7 +69,7 @@ IPAddress subnet(255, 255, 0, 0);
 IPAddress primaryDNS(8, 8, 8, 8);   //optional
 IPAddress secondaryDNS(8, 8, 4, 4); //optional
 
-#define MOTION_WAIT_TIME 10 //Time to wait for motion trigger before publishing motion OFF message
+#define MOTION_WAIT_TIME 5 //Time to wait for motion trigger before publishing motion OFF message
 #define PIR_SENSOR_PIN GPIO_NUM_13
 // Timer: Auxiliary variables
 unsigned long now = millis();
@@ -203,7 +208,7 @@ static esp_err_t stream_handler(httpd_req_t *req){
   while(true){
     fb = esp_camera_fb_get();
     if (!fb) {
-      Serial.println("Camera capture failed");
+      DPRINTLN("Camera capture failed");
       res = ESP_FAIL;
     } else {
       if(fb->width > 400){
@@ -212,7 +217,7 @@ static esp_err_t stream_handler(httpd_req_t *req){
           esp_camera_fb_return(fb);
           fb = NULL;
           if(!jpeg_converted){
-            Serial.println("JPEG compression failed");
+            DPRINTLN("JPEG compression failed");
             res = ESP_FAIL;
           }
         } else {
@@ -264,47 +269,40 @@ void startCameraServer(){
   }
 }
 
-void connectToMqtt() {
-  Serial.println("Connecting to MQTT...");
-  mqttClient.connect();
-}
+void publishMessage(const char msg[]) {
+  // Loop until we're reconnected
+  char i = 0;
+  while (!client.connected()) 
+  {
+    i++;
+    DPRINT("Attempting MQTT connection...");
+    // Attempt to connect
+    client.connect(mqtt_client_name,MQTT_USER,MQTT_PASSWORD);
+    if(i >= MAX_MQTT_CONNECT_RETRY)
+      break;
+  }
 
-void onMqttConnect(bool sessionPresent) {
-  Serial.println("Connected to MQTT.");
-  Serial.print("Session present: ");
-  Serial.println(sessionPresent);
-
-  /*
-  //Subscribe to a topic
-  uint16_t packetIdSub = mqttClient.subscribe("test/lol", 2);
-  Serial.print("Subscribing at QoS 2, packetId: ");
-  Serial.println(packetIdSub);
-
-  //Publish a message at QoS 1
-  uint16_t packetIdPub1 = mqttClient.publish("test/lol", 1, true, "test 2");
-  Serial.print("Publishing at QoS 1, packetId: ");
-  Serial.println(packetIdPub1);
-  */
-  
-}
-
-void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
-  Serial.println("Disconnected from MQTT.");
-
-  if (WiFi.isConnected()) {
-    xTimerStart(mqttReconnectTimer, 0);
+  if (client.connected()) {
+    DPRINTLN("connected");
+    client.publish(MQTT_TOPIC, msg);
+    DPRINT("published message:");
+    DPRINTLN(msg);
+  } 
+  else 
+  {
+    DPRINT("failed, rc=");
+    DPRINT(client.state());
+    DPRINT(" try again in ");
+    DPRINT(CONNECTION_RETRY_TIME);
+    DPRINTLN(" ms");
+    delay(CONNECTION_RETRY_TIME);
   }
 }
 
-void onMqttPublish(uint16_t packetId) {
-  Serial.print("Publish acknowledged. | ");
-  Serial.print("  packetId: ");
-  Serial.println(packetId);
-}
 
 // Checks if motion was detected, sets LED HIGH and starts a timer
 void IRAM_ATTR onMotionDetect(void* arg) {
-  Serial.println("MOTION DETECTED!!!");
+//  DPRINTLN("MOTION DETECTED!!!");
   motionDetected = true;
   startTimer = true;
   lastTrigger = millis();
@@ -315,8 +313,8 @@ void IRAM_ATTR onMotionDetect(void* arg) {
 void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
  
-  Serial.begin(115200);
-  Serial.setDebugOutput(false);
+  DBEGIN(115200);
+  //Serial.setDebugOutput(false);
   
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -377,33 +375,24 @@ void setup() {
   // Wi-Fi connection
   WiFi.setHostname(deviceName);      // DHCP Hostname (useful for finding device for static lease)
   if (!WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS)) {
-    Serial.println("STA Failed to configure");
+    DPRINTLN("STA Failed to configure");
   }
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
-    Serial.print(".");
+    DPRINT(".");
   }
-  Serial.println("");
-  Serial.println("WiFi connected");
+  DPRINTLN("");
+  DPRINTLN("WiFi connected");
 
   // Start streaming web server
   startCameraServer();
-  Serial.print("Camera Stream Ready! Go to: http://");
-  Serial.println(WiFi.localIP());
+  DPRINT("Camera Stream Ready! Go to: http://");
+  DPRINTLN(WiFi.localIP());
 
-  //Set up MQTT related params
-  mqttClient.setCredentials(MQTT_USER,MQTT_PASSWORD);
-  mqttReconnectTimer = xTimerCreate("mqttTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToMqtt));
+  //Instantiate the MQTT server
+  client.setServer(MQTT_SERVER1, MQTT_PORT1);
 
-  mqttClient.onConnect(onMqttConnect);
-  mqttClient.onDisconnect(onMqttDisconnect);
-  mqttClient.onPublish(onMqttPublish);
-  mqttClient.setServer(MQTT_HOST, MQTT_PORT);
-  //Set up MQTT related params end
-
-  connectToMqtt(); //connect to MQTT
-  
 }
 
 void loop() {
@@ -412,17 +401,15 @@ void loop() {
   
   if(motionDetected)
   {
-      uint16_t packetIdPub1 = mqttClient.publish(MQTT_TOPIC, 1, true, "on");
+      publishMessage(MSG_ON);
       motionDetected = false;
-      Serial.print("Publishing motion on at QoS 1, packetId: ");
-      Serial.println(packetIdPub1);
+      //DPRINTLN("Publishing motion on");
   }
   if(startTimer && (now - lastTrigger > (MOTION_WAIT_TIME*1000)))
   {
-    Serial.println("Motion stopped...");
-    uint16_t packetIdPub1 = mqttClient.publish(MQTT_TOPIC, 1, true, "off");
-    Serial.print("Publishing motion off at QoS 1, packetId: ");
-    Serial.println(packetIdPub1);
+    DPRINTLN("Motion stopped...");
+    publishMessage(MSG_OFF);
+    //DPRINTLN("Publishing motion off");
     startTimer = false;
   }
 }
