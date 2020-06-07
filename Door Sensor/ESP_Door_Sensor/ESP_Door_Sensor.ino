@@ -5,6 +5,15 @@
  * 1.3 - Implements receiving message type from ATTiny on Rx/Tx pins via a 2 bit code
  * Works with ATTiny door sensor V 1.3 onwards
  * 
+ * TO DO List
+ * Remove usage of FS/SPIFFS in this, take values form secrets file and build a binary specific for each module as is the case with ESPHome
+ * Introduce AsyncMQTTclient library to publish messages with QoS 1 , you get back an ack id which confirms the message was published , if not , you get back 0
+ * If you get back 0 , you have to publish the message again (not sure if you mark the message try as duplicate though
+ * Mark the messages & topics as retained (flag passed during publish)
+ * Remove the usage of WiFiManager - i think this is not needed at least for my case , why complicate things as if ESP ever gets stuck in a loop without Wifi, it will drain the battery
+ * Solve the bug where I dont see the topic on MQTT in spite the fact that this program publishes it, maybe this will go away once I switch to AsyncMQTT. This bug is causing an issue as
+ * the battery status goes to unknown after some time while I would want it to stay at the last known value - i think this might get solved by retained flag
+ * 
 */
 #include <FS.h>                   //this needs to be first, or it all crashes and burns...
 #include <WiFiManager.h>          //For managing WiFi & Config values , https://github.com/tzapu/WiFiManager
