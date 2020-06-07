@@ -13,6 +13,8 @@
  * Remove the usage of WiFiManager - i think this is not needed at least for my case , why complicate things as if ESP ever gets stuck in a loop without Wifi, it will drain the battery
  * Solve the bug where I dont see the topic on MQTT in spite the fact that this program publishes it, maybe this will go away once I switch to AsyncMQTT. This bug is causing an issue as
  * the battery status goes to unknown after some time while I would want it to stay at the last known value - i think this might get solved by retained flag
+ * Introduce a status LED on GPIO2 to blink thrice and show that a message publish was successful. This can be done as CONFIG functionality is not needed. Even if you need it, you can set
+ * the GPIO2 as INPUT on startup (as you do now) and then change it to OUTPUT 
  * 
 */
 #include <FS.h>                   //this needs to be first, or it all crashes and burns...
