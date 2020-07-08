@@ -19,7 +19,6 @@
  *If you can periodically check the state, using WDT rather than interrupts, then you can check with virtually no power.  Tie the reed switch between two GPIOs and then drive one pin to ground while 
  *the other pin is set to INPUT_PULLUP.  If the input pin follows the output then the switch is closed, if not then it's open. When done reading, drive the output high so there is no current through the switch
  *Current consumption analysis : When the sensor is closed, it takes 3 uA while when it is open it takes 700uA which is great!!!
- *Issue 1: For some reason I am not able to convert this program into setup,loop style ,I get a wierd error if I define a ISR with WDT_vect as argument, so I am using the c style program here
 
 References:
 Code credit : http://brownsofa.org/blog/2011/01/10/the-compleat-attiny13-led-flasher-part-3-low-power-mode/
@@ -180,6 +179,3 @@ int main(void) {
       
    }//end for
 }//end main
-
-
-

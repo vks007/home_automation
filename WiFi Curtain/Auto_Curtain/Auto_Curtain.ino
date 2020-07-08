@@ -33,7 +33,7 @@
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
 
 #define VERSION 1.57
-#define HOSTNAME "MBRCurtain_" //< Hostname. The setup function adds the Chip ID at the end.
+#define HOSTNAME "StudyCurtain_" //< Hostname. The setup function adds the Chip ID at the end.
 #define ENCODER_WAIT_TIME 1000 //time in ms
 #define DEBOUNCE_INTERVAL 300 //time in ms
 #define INIT_ENCODER_VALUE 9999 //Initial value to detect that we havent read any values from the encoder yet

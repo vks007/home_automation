@@ -1,6 +1,6 @@
 
 /*
- * This is the most accurate encoder that I have till date. It counts 1 step for every 2 intends on the encoder. For mu nouse wheel it means 12 steps for a revolution
+ * This is the most accurate encoder that I have till date. It counts 1 step for every 2 intends on the encoder. For my nouse wheel it means 12 steps for a revolution
  * This encoder was originally written for encoder inputs at PB0/PB1 and consequently all operations are defined on bit0/bit1
  * I tried to modify this program to redefine the encoder inputs at PB3/PB4 but could not make it work.
  * So I decided to read values from PB3/PB4 and shift the values to bit0/bit1 and so the remaining program remains the same
