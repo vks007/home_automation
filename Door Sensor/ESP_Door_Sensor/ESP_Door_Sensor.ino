@@ -9,7 +9,6 @@
  * TO DO List
  * Introduce AsyncMQTTclient library to publish messages with QoS 1 , you get back an ack id which confirms the message was published , if not , you get back 0
  * If you get back 0 , you have to publish the message again (not sure if you mark the message try as duplicate though
- * Solve the bug where I dont see the topic on MQTT in spite the fact that this program publishes it, maybe this will go away once I switch to AsyncMQTT. This bug is causing an issue as
  * Introduce a status LED on GPIO2 to blink thrice and show that a message publish was successful. This can be done as CONFIG functionality is not needed. Even if you need it, you can set
  * the GPIO2 as INPUT on startup (as you do now) and then change it to OUTPUT 
  * 
@@ -18,18 +17,19 @@
  * Mark the messages & topics as retained (flag passed during publish)
  * Remove the usage of WiFiManager - i think this is not needed at least for my case , why complicate things as if ESP ever gets stuck in a loop without Wifi, it will drain the battery
  * the battery status goes to unknown after some time while I would want it to stay at the last known value - i think this might get solved by retained flag
+ * Solve the bug where I dont see the topic on MQTT in spite the fact that this program publishes it - this has been taken care of by retained messages. 
 */
 #include <PubSubClient.h>
 #include <ESP8266WiFi.h>
 
 // Uncomment one of the below define to compile the program for that device
-#define MAIN_DOOR
-//#define TERRACE_DOOR
+//#define MAIN_DOOR
+#define TERRACE_DOOR
 #include "DoorConfig.h"
 #include "secrets.h" //From /libraries/MyFiles/secrets.h
 
 //#define TESTING_MODE //used to prevent using Rx & Tx as input pins , rather use them as normal serial pins for debugging , comment this out during normal operation
-//#define DEBUG //BEAWARE that this statement should be before #include <DebugMacros.h> else the macros wont work as they are based on this #define
+//#define DEBUG //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
 
 //Types of messages decoded via the signal pins
