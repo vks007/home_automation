@@ -54,20 +54,16 @@ const char* deviceName = "ESP32_CAM_PIR";
 #define MQTT_PASSWORD MQTT_PSWD1
 #define MQTT_HOST MQTT_SERVER1
 #define MQTT_PORT MQTT_PORT1
-#define MQTT_TOPIC "home/camera1/motion"
+#define MQTT_PIR_TOPIC "home/camera1/motion"
+#define MQTT_IP_TOPIC "home/camera1/ipaddress"
+#define MQTT_MAC_TOPIC "home/camera1/mac"
 #define MSG_ON "on" //payload for ON
 #define MSG_OFF "off"//payload for OFF
 char mqtt_client_name[20] = "esp32_cam1"; // Client connections cant have the same connection name
+#define ESP_IP_ADDRESS          IPAddress(192,168,1,62)
 
 WiFiClient espClient;
 PubSubClient client(espClient);
-
-// Set your Static IP address
-IPAddress local_IP(192, 168, 1, 62);
-IPAddress gateway(192, 168, 1, 1); // Set your Gateway IP address
-IPAddress subnet(255, 255, 0, 0);
-IPAddress primaryDNS(8, 8, 8, 8);   //optional
-IPAddress secondaryDNS(8, 8, 4, 4); //optional
 
 #define MOTION_WAIT_TIME 5 //Time to wait for motion trigger before publishing motion OFF message
 #define PIR_SENSOR_PIN GPIO_NUM_13
@@ -269,7 +265,7 @@ void startCameraServer(){
   }
 }
 
-void publishMessage(const char msg[]) {
+void publishMessage(const char msg[], const char topic[], bool retained = false) {
   // Loop until we're reconnected
   char i = 0;
   while (!client.connected()) 
@@ -284,7 +280,7 @@ void publishMessage(const char msg[]) {
 
   if (client.connected()) {
     DPRINTLN("connected");
-    client.publish(MQTT_TOPIC, msg);
+    client.publish(topic, msg);
     DPRINT("published message:");
     DPRINTLN(msg);
   } 
@@ -374,7 +370,8 @@ void setup() {
   
   // Wi-Fi connection
   WiFi.setHostname(deviceName);      // DHCP Hostname (useful for finding device for static lease)
-  if (!WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS)) {
+  
+  if (!WiFi.config(ESP_IP_ADDRESS, GATEWAY1, SUBNET1)) {
     DPRINTLN("STA Failed to configure");
   }
   WiFi.begin(ssid, password);
@@ -393,6 +390,10 @@ void setup() {
   //Instantiate the MQTT server
   client.setServer(MQTT_SERVER1, MQTT_PORT1);
 
+  publishMessage(WiFi.localIP().toString().c_str(),MQTT_IP_TOPIC,true);
+  publishMessage(WiFi.macAddress().c_str(),MQTT_MAC_TOPIC,true);
+ 
+
 }
 
 void loop() {
@@ -401,14 +402,14 @@ void loop() {
   
   if(motionDetected)
   {
-      publishMessage(MSG_ON);
+      publishMessage(MSG_ON,MQTT_PIR_TOPIC);
       motionDetected = false;
       //DPRINTLN("Publishing motion on");
   }
   if(startTimer && (now - lastTrigger > (MOTION_WAIT_TIME*1000)))
   {
     DPRINTLN("Motion stopped...");
-    publishMessage(MSG_OFF);
+    publishMessage(MSG_OFF,MQTT_PIR_TOPIC);
     //DPRINTLN("Publishing motion off");
     startTimer = false;
   }
