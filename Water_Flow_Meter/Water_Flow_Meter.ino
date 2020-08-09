@@ -1,3 +1,7 @@
+/*
+ * ver 1.0.0 - fully working version. publishes messages to MQTT when data changes
+ */
+
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoOTA.h>
@@ -13,7 +17,7 @@
 #define FLOW_METER_TANK
 #include "flow_meter_config.h"
 
-#define VERSION "1.0.0"
+#define VERSION "1.1.0"
 const char compile_version[] = VERSION __DATE__ " " __TIME__;
 
 const char ssid[] = SSID1; //SSID of WiFi to connect to
