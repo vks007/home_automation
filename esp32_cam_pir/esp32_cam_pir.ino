@@ -41,10 +41,6 @@ extern "C" {
   #include "freertos/timers.h"
 }
 
-const char* ssid = SSID2;
-const char* password = SSID2_PSWD;
-const char* deviceName = "ESP32_CAM_PIR";
-
 // MQTT related info
 //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!             ATTENTION                       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 //Will have to see if I can afford to wait for this long a time before retrying the MQTT connection. It might trigger a WDT somewhere or fail the ESP32 CAM code
@@ -55,12 +51,16 @@ const char* deviceName = "ESP32_CAM_PIR";
 #define MQTT_HOST MQTT_SERVER1
 #define MQTT_PORT MQTT_PORT1
 #define MQTT_PIR_TOPIC "home/camera1/motion"
-#define MQTT_IP_TOPIC "home/camera1/ipaddress"
-#define MQTT_MAC_TOPIC "home/camera1/mac"
+#define MQTT_WIFI_TOPIC "home/camera1/wifi"
 #define MSG_ON "on" //payload for ON
 #define MSG_OFF "off"//payload for OFF
-char mqtt_client_name[20] = "esp32_cam1"; // Client connections cant have the same connection name
 #define ESP_IP_ADDRESS          IPAddress(192,168,1,62)
+#define VERSION "1.0.1"
+#include "version.h" 
+
+const char* ssid = SSID2;
+const char* password = SSID2_PSWD;
+const char* deviceName = "ESP32_CAM_PIR";
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -273,14 +273,14 @@ void publishMessage(const char msg[], const char topic[], bool retained = false)
     i++;
     DPRINT("Attempting MQTT connection...");
     // Attempt to connect
-    client.connect(mqtt_client_name,MQTT_USER,MQTT_PASSWORD);
+    client.connect(deviceName,MQTT_USER,MQTT_PASSWORD);
     if(i >= MAX_MQTT_CONNECT_RETRY)
       break;
   }
 
   if (client.connected()) {
     DPRINTLN("connected");
-    client.publish(topic, msg);
+    client.publish(topic, msg,retained);
     DPRINT("published message:");
     DPRINTLN(msg);
   } 
@@ -390,9 +390,9 @@ void setup() {
   //Instantiate the MQTT server
   client.setServer(MQTT_SERVER1, MQTT_PORT1);
 
-  publishMessage(WiFi.localIP().toString().c_str(),MQTT_IP_TOPIC,true);
-  publishMessage(WiFi.macAddress().c_str(),MQTT_MAC_TOPIC,true);
- 
+  String str = "{\"ip_address\":\"" + WiFi.localIP().toString() + "\" , \"mac\":\"" + WiFi.macAddress() + "\" , \"version\": \"" + compile_version + "\"}";
+  
+  publishMessage(str.c_str(),MQTT_WIFI_TOPIC,true);
 
 }
 
