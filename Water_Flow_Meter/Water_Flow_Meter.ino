@@ -1,7 +1,6 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoOTA.h>
-#include <Ticker.h>
 #include <ArduinoJson.h>
 
 //common files from /libraries/MyFiles
@@ -10,10 +9,6 @@
 //#include "myutils.h" //common utilities
 #define DEBUG //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 #include "Debugutils.h" 
-
-
-//#define DPRINT(x) do { Serial.print(x); } while (0)
-//#define DPRINTLN(x) do { Serial.println(x); } while (0)
 
 #define FLOW_METER_TANK
 #include "flow_meter_config.h"
@@ -34,13 +29,15 @@ const char* deviceName = "flow_meter_tank";
 #define PULSE_PER_LIT 255 //no of pulses the meter counts for 1 lit of water
 #define MAX_MQTT_CONNECT_RETRY 5
 #define MAX_JSON_LEN  100 //max no of characters in a json doc
+#define STATE_TOPIC "state"
+#define WIFI_TOPIC "wifi"
+#define DEBUG_TOPIC "debug"
 
 volatile unsigned int Pulses = 0;
-volatile unsigned int PulsesLast = 0;
 volatile unsigned int TotalPulses = 0;
-volatile unsigned int PulsesPeriods = 0;
 volatile float flow_rate = 0.0;//flow rate is per minute
 volatile float total_volume = 0.0;//stores the total volume of liquid since start
+volatile float last_volume = 0.0;//stores the last value of total_volume 
 
 #ifdef KLIT
   const float factor = 0.001;
@@ -49,8 +46,9 @@ volatile float total_volume = 0.0;//stores the total volume of liquid since star
 #endif
 
 os_timer_t publish_timer;
-bool publish_tick = false;
+bool publish_tick = true;//to enable publishing of message on startup
 volatile unsigned long LastMicros;
+String ip_addr = "";
 
 WiFiClient espClient;
 PubSubClient mqtt_client(espClient);
@@ -62,21 +60,16 @@ void ICACHE_RAM_ATTR pulseHandler() {
   }
 }
 
-
 void timerCallback(void *pArg) {
-  PulsesLast = Pulses;
   TotalPulses += Pulses;
   flow_rate = (float)Pulses/(PULSE_PER_LIT*REPORT_INTERVAL)*60.0*factor;
+  last_volume = total_volume; //save last value
   total_volume = (float)TotalPulses/PULSE_PER_LIT*factor;
-/*  
-  DPRINTFLN("Pulses:%d",Pulses);
-  DPRINT("TotalPulses:");DPRINTLN(TotalPulses);
-  DPRINTFLN("flow_rate:%f",flow_rate);
-  DPRINTFLN("total_volume:%f",total_volume);
-*/
-  Pulses = 0;
-  PulsesPeriods++;
-  publish_tick = true;
+  Pulses = 0;//reset pulses as this is needed to calculate rate per REPORT_INTERVAL only
+  if(last_volume != total_volume)
+    publish_tick = true;
+    //only publish a message if the values have changed, if flow rate changed, total volume would also change so no 
+    //need to check both
 }
 
 void timerInit(void) {
@@ -139,23 +132,23 @@ bool publishMessage(String topic, String msg,bool retain) {
   while (!mqtt_client.connected()) 
   {
     i++;
-    DPRINT("Attempting MQTT connection...");
+    DPRINTLN("Attempting MQTT connection...");
     mqtt_client.connect(DEVICE_NAME,MQTT_USER1,MQTT_PSWD1);
     if(i >= MAX_MQTT_CONNECT_RETRY)
       break;
   }
-  DPRINTLN(msg);
+  DPRINT(topic);DPRINT("-->");DPRINT(msg);
   //Now publish the message
   if(mqtt_client.connected())
   {
     if (mqtt_client.publish(topic.c_str(), msg.c_str(),retain))
     {
-      DPRINTLN("message publish success");
+      DPRINTLN(" - OK");
       return true;
     }
     else 
     {
-      DPRINTLN("message publish fail");
+      DPRINTLN(" - FAIL");
       return false;
     }
   }
@@ -169,6 +162,17 @@ bool publishJsonMessage(String topic,StaticJsonDocument<MAX_JSON_LEN> doc,bool r
   serializeJson(doc,payload);
   return publishMessage(topic,payload,retain);
 
+}
+
+void publishWiFimsg()
+{
+  //prepare the json doc for the wifi message
+  StaticJsonDocument<MAX_JSON_LEN> doc;
+  ip_addr = WiFi.localIP().toString();
+  doc["ip_address"] = ip_addr;
+  doc["mac"] = WiFi.macAddress();
+  doc["version"] = compile_version;
+  publishJsonMessage(MQTT_BASE_TOPIC WIFI_TOPIC,doc,true);
 }
 
 void setup() {
@@ -190,6 +194,7 @@ void setup() {
   attachInterrupt(PULSE_PIN, pulseHandler, RISING);
 
   timerInit();
+  publishWiFimsg();
 }
 
 void loop() 
@@ -201,19 +206,21 @@ void loop()
     doc["flow_unit"] = (factor == 1?"lit/min":"Klit/min");
     doc["total_volume"] = total_volume;
     doc["vol_unit"] = (factor == 1?"lit":"Klit");
-    doc["Uptime"] = (unsigned long)millis()/1000;
+    doc["uptime"] = (unsigned long)millis()/1000;
 
-    if(publishJsonMessage(MQTT_DATA_TOPIC,doc,false))
-        PulsesPeriods = 0;
-    
-    //prepare the json doc for the wifi message
-    doc.clear();
-    doc["ip_address"] = WiFi.localIP().toString();
-    doc["mac"] = WiFi.macAddress();
-    doc["version"] = compile_version;
-    publishJsonMessage(MQTT_WIFI_TOPIC,doc,false);
+    publishJsonMessage(MQTT_BASE_TOPIC STATE_TOPIC,doc,false);
+
+    #ifdef DEBUG
+      //prepare the json doc for the wifi message
+      doc.clear();
+      doc["TotalPulses"] = TotalPulses;
+      publishJsonMessage(MQTT_BASE_TOPIC DEBUG_TOPIC,doc,false);
+    #endif    
     
     publish_tick = false;
+
+    if(ip_addr != WiFi.localIP().toString())//means the IP add has changed
+      publishWiFimsg();
   }
 
   digitalWrite(STATUS_LED_PIN, 0);
