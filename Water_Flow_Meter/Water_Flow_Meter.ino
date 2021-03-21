@@ -34,13 +34,12 @@ const char ssid_pswd[] = SSID1_PSWD; //Password of WiFi to connect to
 const char* deviceName = "flow_meter_tank";
 
 //GPIO pin defn
-#define STATUS_LED_PIN D1  
-#define PULSE_PIN D7
-#define WAKEUP_PIN D5
+#define PULSE_PIN D1
+#define WAKEUP_PIN D2
 
 //config params
-#define REPORT_INTERVAL 2 // interval in seconds at which the message is posted to MQTT when the ESP is awake , cannot be greater than IDLE_TIME
-#define IDLE_TIME 60 //300 //idle time in sec beyod which the ESP goes to sleep , to be woken up only by a pulse from the meter
+#define REPORT_INTERVAL 5 // interval in seconds at which the message is posted to MQTT when the ESP is awake , cannot be greater than IDLE_TIME
+#define IDLE_TIME 30 //300 //idle time in sec beyond which the ESP goes to sleep , to be woken up only by a pulse from the meter
 
 #define DEBOUNCE_INTERVAL 10 //debouncing time in ms for interrupts
 #define PULSE_PER_LIT 255 //no of pulses the meter counts for 1 lit of water , adjust this for each water meter after calibiration
@@ -64,7 +63,7 @@ unsigned long last_publish_time = 0;//stores the no of ms since a message was la
 #endif
 
 os_timer_t publish_timer;
-bool publish_tick = true;//to enable publishing of message on startup
+bool publish_tick = false;//to enable publishing of message on startup
 volatile unsigned long lastMicros;
 IPAddress esp_ip ;
 
@@ -141,7 +140,7 @@ void setupWiFi()
 
 
 /*
- * Function to connect to MQTT is not connected, and then publish the message
+ * Function to connect to MQTT if not connected, and then publish the message
  */
 bool publishMessage(String topic, String msg,bool retain) {
   if(WiFi.status() != WL_CONNECTED)
@@ -186,8 +185,8 @@ void publishWiFimsg()
 }
 
 void light_sleep(){
+    DPRINTLN("CPU going to sleep, pull WAKE_UP_PIN low to wake it");DFLUSH();
     WiFi.mode(WIFI_OFF);  // you must turn the modem off; using disconnect won't work
-    DPRINT("CPU going to sleep, pull WAKE_UP_PIN low to wake it");
     wifi_fpm_set_sleep_type(LIGHT_SLEEP_T);
     gpio_pin_wakeup_enable(GPIO_ID_PIN(WAKEUP_PIN), GPIO_PIN_INTR_LOLEVEL);// only LOLEVEL or HILEVEL interrupts work, no edge, that's a CPU limitation
     wifi_fpm_open();
@@ -264,13 +263,11 @@ void setup() {
   setupWiFi();
 
   pinMode(WAKEUP_PIN, INPUT_PULLUP);//INPUT_PULLUP
-  pinMode(STATUS_LED_PIN, OUTPUT);
-  digitalWrite(STATUS_LED_PIN, LOW);
   pinMode(PULSE_PIN, INPUT);
   attachInterrupt(PULSE_PIN, pulseHandler, RISING);
 
   timerInit();
-  publishMessages('W');//this is only published once unless the IP changes in between
+//  publishMessages('W');//this is only published once unless the IP changes in between
 }
 
 void loop() 
