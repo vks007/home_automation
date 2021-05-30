@@ -7,7 +7,8 @@
  * https://github.com/esp8266/Arduino/tree/master/libraries/esp8266/examples/LowPowerDemo
  * CAUTION: Make sure the MQTT connect and publish code is not within the callback. It creates a lot of issues with reconnecting to MQTT after
  * the expiry of keepalive timeout.
- * 
+ * TO DO : See the code here to sleep and do MQTT publish, maybe this will avoid the crash problem I am facing with this program
+ * https://gitlab.com/diy_bloke/verydeepsleep_mqtt.ino/blob/master/VeryDeepSleep_MQTT.ino
  */
 #define DEBUG //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 #include "Debugutils.h" 
@@ -15,12 +16,15 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <ESP8266WebServer.h>
 
 //common files from /include
 #include "secrets.h" 
 #include "version.h" 
 #include "myutils.h" //common utilities
 #include "ESPOTA.h" //OTA capability
+#include "websocket_log.h"
+ESP8266WebServer server;
 
 #define FLOW_METER_TANK
 #include "flow_meter_config.h"
@@ -39,7 +43,7 @@ const char* deviceName = "flow_meter_tank";
 
 //config params
 #define REPORT_INTERVAL 5 // interval in seconds at which the message is posted to MQTT when the ESP is awake , cannot be greater than IDLE_TIME
-#define IDLE_TIME 30 //300 //idle time in sec beyond which the ESP goes to sleep , to be woken up only by a pulse from the meter
+#define IDLE_TIME 120 //300 //idle time in sec beyond which the ESP goes to sleep , to be woken up only by a pulse from the meter
 
 #define DEBOUNCE_INTERVAL 10 //debouncing time in ms for interrupts
 #define PULSE_PER_LIT 255 //no of pulses the meter counts for 1 lit of water , adjust this for each water meter after calibiration
@@ -82,7 +86,7 @@ void timerInit(void) {
   os_timer_arm(&publish_timer, 1000 * REPORT_INTERVAL, true);
 }
 
-void connectMQTT()
+boolean connectMQTT()
 {
   if(!mqtt_client.connected()){
     // Loop until we're reconnected
@@ -94,6 +98,7 @@ void connectMQTT()
       i--;
     }
   }
+  return mqtt_client.connected();
 }
 
 void setupWiFi() 
@@ -147,23 +152,30 @@ bool publishMessage(String topic, String msg,bool retain) {
       return false;
   connectMQTT();
 
+  webSocket.broadcastTXT(msg);
   DPRINT(topic);DPRINT("-->");DPRINT(msg);
   //Now publish the message
   if(mqtt_client.connected())
   {
+    //webSocket.broadcastTXT("Connected to MQTT");
     if (mqtt_client.publish(topic.c_str(), msg.c_str(),retain))
     {
       DPRINTLN(" - OK");
+      webSocket.broadcastTXT(" - OK\n");
       return true;
     }
     else 
     {
       DPRINTLN(" - FAIL");
+      webSocket.broadcastTXT(" - FAIL\n");
       return false;
     }
   }
   else
+  {
+    webSocket.broadcastTXT("Not Connected to MQTT\n");
     DPRINTLN("Failed to establish MQTT connection...");
+  }
   
 }
 
@@ -266,12 +278,20 @@ void setup() {
   pinMode(PULSE_PIN, INPUT);
   attachInterrupt(PULSE_PIN, pulseHandler, RISING);
 
+  server.on("/log",[](){
+  server.send_P(200, "text/html", webpage);
+  });
+  server.begin();
+  ws_setup();
+
   timerInit();
 //  publishMessages('W');//this is only published once unless the IP changes in between
 }
 
 void loop() 
 {
+  ws_loop();
+  server.handleClient();
   
   if(publish_tick)
   {
@@ -280,13 +300,15 @@ void loop()
   unsigned long idle_time = millis() - last_publish_time;
   if(idle_time >= IDLE_TIME * 1000)
   {
+    webSocket.broadcastTXT("going to sleep after being idle\n");
     DPRINT("going to sleep after being idle for :"); DPRINT(idle_time/1000);DPRINTLN(" sec");DFLUSH();
     light_sleep();
     
     last_publish_time = millis();
     delay(10);
     setupWiFi();
- }
+  }
+ 
   ArduinoOTA.handle();
 
   yield();

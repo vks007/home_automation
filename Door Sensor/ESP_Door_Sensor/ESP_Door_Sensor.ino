@@ -24,13 +24,17 @@
 
 // Uncomment one of the below define to compile the program for that device
 //#define MAIN_DOOR
-#define TERRACE_DOOR
+//#define TERRACE_DOOR
+#define BALCONY_DOOR
+// define module type as either ESP_01 OR ESP_12 as the pin assignments are different for them
+#define ESP_12
+//#define ESP_01
+//#define TESTING_MODE //used to prevent using Rx & Tx as input pins , rather use them as normal serial pins for debugging , comment this out during normal operation
+#define DEBUG //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
+#include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
+
 #include "DoorConfig.h"
 #include "secrets.h" //From /libraries/MyFiles/secrets.h
-
-//#define TESTING_MODE //used to prevent using Rx & Tx as input pins , rather use them as normal serial pins for debugging , comment this out during normal operation
-//#define DEBUG //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
-#include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
 
 //Types of messages decoded via the signal pins
 #define SENSOR_NONE 0
@@ -40,16 +44,29 @@
 #define MAX_MQTT_CONNECT_RETRY 4 //max no of retries to connect to MQTT server
 
 //Hold pin will hold CH_PD HIGH till we're executing the setup, the last step would be set it LOW which will power down the ESP
-#define HOLD_PIN 0  // defines GPIO0 as the hold pin (will hold CH_PD high untill we power down).
-#define SIGNAL_PIN0 1 //Bit 1 of the signal which indicates the message type
-#define SIGNAL_PIN1 3 //Bit 2 of the signal which indicates the message type
-//State Mapping of SIGNAL_PIN0 SIGNAL_PIN1:: 11=>IDLE , 00=> SENSOR_WAKEUP , 01=> SENSOR OPEN , 10=> SENSOR CLOSED
+#if defined(ESP_01)
+  #warning "Compiling the program module type : ESP_01"
+  #define HOLD_PIN 0  // defines GPIO0 as the hold pin (will hold CH_PD high untill we power down).
+  #define SIGNAL_PIN0 1 //Bit 1 of the signal which indicates the message type
+  #define SIGNAL_PIN1 3 //Bit 2 of the signal which indicates the message type
+  //State Mapping of SIGNAL_PIN0 SIGNAL_PIN1:: 11=>IDLE , 00=> SENSOR_WAKEUP , 01=> SENSOR OPEN , 10=> SENSOR CLOSED
+#elif defined(ESP_12)
+  #warning "Compiling the program module type : ESP_12"
+  #define HOLD_PIN 0  // defines GPIO0 as the hold pin (will hold CH_PD high untill we power down).
+  #define SIGNAL_PIN0 5 //Bit 1 of the signal which indicates the message type
+  #define SIGNAL_PIN1 4 //Bit 2 of the signal which indicates the message type
+  //State Mapping of SIGNAL_PIN0 SIGNAL_PIN1:: 11=>IDLE , 00=> SENSOR_WAKEUP , 01=> SENSOR OPEN , 10=> SENSOR CLOSED
+#else
+  #error "ESP module type not defined"
+#endif
+
+
 #define MSG_ON "on" //payload for ON
 #define MSG_OFF "off"//payload for OFF
 
 ADC_MODE(ADC_VCC);//connects the internal ADC to VCC pin and enables measuring Vcc
 
-char VERSION[] = "2.0.0"; 
+char VERSION[] = "2.1.0"; 
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -63,6 +80,7 @@ void setup()
   short CURR_MSG = SENSOR_NONE; //This stores the message type deciphered from the states of the signal pins
   short PREV_MSG = SENSOR_NONE; //This stores the message type deciphered from the states of the signal pins
 
+  DPRINT("State of GPIO0:");DPRINTLN(digitalRead(HOLD_PIN));
   #ifndef TESTING_MODE
   if(SIGNAL_PIN0 == 1 || SIGNAL_PIN0 == 3)
     pinMode(SIGNAL_PIN0, FUNCTION_3);//Because we're using Rx & Tx as inputs here, we have to set the input type
@@ -136,11 +154,13 @@ void setupWiFi()
   DPRINTLN(".....");
   
   WiFi.mode(WIFI_STA); // Force to station mode because if device was switched off while in access point mode it will start up next time in access point mode.
-  WiFi.begin();
+  WiFi.begin(SSID1,SSID1_PSWD);
   for(short i=0;i<3000;i++) //break after 30 sec 3000*10 msec
   {
     if(WiFi.status() != WL_CONNECTED)
+    {
       delay(10);//Dont increase this delay, I set it to 500 and it takes a very long time to connect, I think this blocks the execution
+    }
     else
     {
       DPRINT("WiFi connected, IP Address:");
@@ -210,4 +230,5 @@ void loop()
 {
   //Nothing to do here as the setup does all the work and then powers down the ESP by writing a LOW signal to CH_PD  
   DPRINTLN("in loop, we should have never reached here !!!!");
+  delay(2000);
 }

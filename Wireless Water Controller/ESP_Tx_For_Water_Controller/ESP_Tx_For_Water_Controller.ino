@@ -1,21 +1,16 @@
-// ---------------------------------------------------------------------------
-// Ensure #define TIMER_ENABLED is true in NewPing.h  for use with ESP8266
-// ---------------------------------------------------------------------------
-#include <NewPing.h> 
+#include <HCSR04.h>
 #include <RH_ASK.h>
 #ifdef RH_HAVE_HARDWARE_SPI
 #include <SPI.h> // Not actually used but needed to compile
 #endif
 
-#define TRIGGER_PIN D0
-#define ECHO_PIN D5
-#define DISTANCE 300
-
-#define Rx D2 // D2 for ESP
-#define Tx D1 //D1 for ESP 
+#define Rx D8 // D2 for ESP //not used , dummy
+#define Tx D0 //D1 for ESP 
 
 RH_ASK driver(2000, Rx, Tx, 0); // ATTiny, RX on D3 (pin 2 on attiny85) TX on D4 (pin 3 on attiny85), 
-NewPing sonar(TRIGGER_PIN, ECHO_PIN, DISTANCE); 
+
+// UltraSonicDistanceSensor(Trigger pin , echo pin)
+UltraSonicDistanceSensor sonar(D1, D2);
 
 struct SensorData { 
   int height;
@@ -23,21 +18,20 @@ struct SensorData {
 
 SensorData sensor; 
 
-void setup() {
-  Serial.begin(115200);
+void setup () {
+    Serial.begin(115200);  // We initialize serial connection so that we could print values from sensor.
   if(driver.init())
     Serial.println("Driver initialized");
 }
-void loop() {
-  uint8_t distance = sonar.ping_cm();
-  //Serial.println(distance);
-  sensor.height = distance;
-//uint8_t distance = 1234;
-  driver.send((uint8_t*)&sensor, sizeof(sensor));
+
+void loop () {
+    // Every 500 miliseconds, do a measurement using the sensor and print the distance in centimeters.
+    uint8_t distance = sonar.measureDistanceCm();
+    Serial.println(distance);
+    sensor.height = distance;
+    //uint8_t distance = 1234;
+    driver.send((uint8_t*)&sensor, sizeof(sensor));
+    driver.waitPacketSent();
     
-  //char msg[4];
-  //itoa(distance,msg,10);
-  //driver.send((uint8_t *)msg, strlen(msg));
-  driver.waitPacketSent();
-  delay(1000);
+    delay(500);
 }
