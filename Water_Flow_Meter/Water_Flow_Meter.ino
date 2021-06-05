@@ -2,17 +2,17 @@
  * ver 1.0.0 - fully working version. publishes messages to MQTT when data changes
  * ver 1.1.0 - sleep functionality , ESP sleeps if there is no data change for a certain period and wakes up on recieving pulses from the meter
  * TO DO LIST
- * - store data into RTC memory
+ * - store data into RTC memory - see if you really want this to happen as power cycling the ESP will not reset stats then, will have to find an alternative to resetting
  * REFERENCES:
  * https://github.com/esp8266/Arduino/tree/master/libraries/esp8266/examples/LowPowerDemo
- * CAUTION: Make sure the MQTT connect and publish code is not within the callback. It creates a lot of issues with reconnecting to MQTT after
- * the expiry of keepalive timeout.
+ * https://gitlab.com/diy_bloke/verydeepsleep_mqtt.ino/blob/master/VeryDeepSleep_MQTT.ino
  * 
- * LEARNINGS FOR FUTURE
+ * LEARNINGS
  * I had mislabeled WAKEUP pin and PULSE pin which was causing the ESP to reset after 7 sec of sleepby WDT. Pl be aware of the pins
  * If i connect the USB and separate power both to the ESP then i get a few pulses on the PULSE pin due to noise, disconnect USB and it goes away
  * so dont work with USB connected.
- * https://gitlab.com/diy_bloke/verydeepsleep_mqtt.ino/blob/master/VeryDeepSleep_MQTT.ino
+ * CAUTION: Make sure the MQTT connect and publish code is not within the callback. It creates a lot of issues with reconnecting to MQTT after
+ * the expiry of keepalive timeout.
  */
 
 //  ***************** HASH DEFINES ************ THIS SHOULD BE THE FIRST SECTION IN THE CODE BEFORE ANY INCLUDES *******************************
@@ -59,17 +59,22 @@ const char* deviceName = "flow_meter_tank";
 #define DEBOUNCE_INTERVAL 10 //debouncing time in ms for interrupts
 #define PULSE_PER_LIT 255 //no of pulses the meter counts for 1 lit of water , adjust this for each water meter after calibiration
 #define MAX_MQTT_CONNECT_RETRY 3
-#define MAX_JSON_LEN  100 //max no of characters in a json doc
+#define MAX_JSON_LEN  200 //max no of characters in a json doc
 #define STATE_TOPIC "state"
 #define WIFI_TOPIC "wifi"
 #define DEBUG_TOPIC "debug"
 
-volatile unsigned int Pulses = 0;
-volatile unsigned int TotalPulses = 0;
+volatile unsigned int pulses = 0;
+volatile unsigned int last_pulses = 0;
+volatile unsigned int total_pulses = 0;
 volatile float flow_rate = 0.0;//flow rate is per minute
 volatile float total_volume = 0.0;//stores the total volume of liquid since start
 volatile float last_volume = 0.0;//stores the last value of total_volume 
 unsigned long last_publish_time = 0;//stores the no of ms since a message was last published , used to sleep the ESP beyond a certain value
+unsigned long sleep_time_start = 0;
+unsigned long sleep_time = 0;
+unsigned long up_time = RTCmillis();
+unsigned awake_count = 0;
 
 #ifdef KLIT
   const float factor = 0.001;
@@ -87,7 +92,7 @@ PubSubClient mqtt_client(espClient);
 
 void IRAM_ATTR pulseHandler() {
   if((long)(micros() - lastMicros) >= DEBOUNCE_INTERVAL * 1000) {
-    Pulses += 1;
+    pulses += 1;
     lastMicros = micros();
   }
 }
@@ -114,7 +119,7 @@ boolean connectMQTT()
 
 void setupWiFi() 
 {
-  if(WiFi.status() == WL_CONNECTED && mqtt_client.connected())
+  if(WiFi.status() == WL_CONNECTED)
   {
     DPRINTLN("Already connected");
     return;
@@ -130,7 +135,11 @@ void setupWiFi()
 
   WiFi.mode(WIFI_STA); 
   WiFi.begin(ssid,ssid_pswd);
-  
+
+// connection to WiFi is not critical at this stage, it can happen in the background
+// If WiFi is not connected, messages will be pooled till it is available anyway
+// commenting out the wait for connection below does not work, i never get a WiFi connection , will debug later
+// maybe i can use the PersWiFiManager library from here: https://github.com/r-downing/PersWiFiManager  
   for(short i=0;i<6000;i++) //break after 60 sec 6000*10 msec
   {
     if(WiFi.status() != WL_CONNECTED)
@@ -152,6 +161,8 @@ void setupWiFi()
       break;
     }
   }
+
+  
   os_timer_arm(&publish_timer, 1000 * REPORT_INTERVAL, true); //re-enable the timer
 }
 
@@ -217,9 +228,12 @@ void light_sleep(){
     wifi_fpm_set_sleep_type(LIGHT_SLEEP_T);
     gpio_pin_wakeup_enable(GPIO_ID_PIN(WAKEUP_PIN), GPIO_PIN_INTR_LOLEVEL);// only LOLEVEL or HILEVEL interrupts work, no edge, that's a CPU limitation
     wifi_fpm_open();
+    sleep_time_start = RTCmillis(); //record the time before sleeping
     wifi_fpm_do_sleep(0xFFFFFFF);  // only 0xFFFFFFF, any other value and it won't disconnect the RTC timer
     delay(10);  // it goes to sleep during this delay() and waits for an interrupt
     DPRINTLN(F("Woke up!"));  // the interrupt callback hits before this is executed*/
+    //sometimes the above statement gets printed before actually sleeping off, doesnt happen all the time though
+    //But the code works as expected, the ESP sleeps after printing Woke up
  }
 
 /*
@@ -243,7 +257,10 @@ void publishMessages(char type)
       doc["flow_unit"] = (factor == 1?"lit/min":"Klit/min");
       doc["total_volume"] = (float)total_volume; 
       doc["vol_unit"] = (factor == 1?"lit":"Klit");
-      doc["uptime"] = (unsigned long)millis()/1000;
+      up_time = RTCmillis();
+      doc["up_time"] = (unsigned long)up_time/1000;
+      doc["sleep_time"] = (unsigned long)sleep_time/1000;
+      doc["awake_count"] = awake_count;
       publishJsonMessage(MQTT_BASE_TOPIC STATE_TOPIC,doc,false);
     }
 
@@ -252,7 +269,7 @@ void publishMessages(char type)
       #ifdef DEBUG
         //prepare the debug message 
         doc.clear();
-        doc["TotalPulses"] = TotalPulses;
+        doc["total_pulses"] = total_pulses;
         publishJsonMessage(MQTT_BASE_TOPIC DEBUG_TOPIC,doc,false);
       #endif
     }
@@ -264,16 +281,19 @@ void publishMessages(char type)
 
 //system_get_rst_info ()
 void timerCallback(void *pArg) {
-  TotalPulses += Pulses;
-  flow_rate = (float)Pulses/(PULSE_PER_LIT*REPORT_INTERVAL)*60.0*factor;
+  total_pulses += pulses;
+  flow_rate = (float)pulses/(PULSE_PER_LIT*REPORT_INTERVAL)*60.0*factor;
   last_volume = total_volume; //save last value
-  total_volume = (float)TotalPulses/PULSE_PER_LIT*factor;
+  total_volume = (float)total_pulses/PULSE_PER_LIT*factor;
 
   //only publish a message if the values have changed, if flow rate changed, total volume would also change so no 
   //need to check both
-  if(Pulses > 0)
+  
+  //if(pulses > 0)
+  if(last_pulses != pulses)
   {
-    Pulses = 0;//reset pulses as this is needed to calculate rate per REPORT_INTERVAL only
+    last_pulses = pulses;
+    pulses = 0;//reset pulses as this is needed to calculate rate per REPORT_INTERVAL only
     //publishMessages('A');
     publish_tick = true;
   }
@@ -284,11 +304,12 @@ void timerCallback(void *pArg) {
 }
 
 void setup() {
+  awake_count = 1; // set the awake count to 1
   DBEGIN(115200);
   delay(1);
   DPRINTLN("");
   DPRINTLN(compile_version);
-  pinMode(LED_BUILTIN, OUTPUT);
+//  pinMode(LED_BUILTIN, OUTPUT);
 
   setupWiFi();
 
@@ -301,7 +322,7 @@ void setup() {
   WS_SETUP();
 
   timerInit();
-//  publishMessages('W');//this is only published once unless the IP changes in between
+  publishMessages('A');//this is only published once unless the IP changes in between
 }
 
 void loop() 
@@ -318,11 +339,12 @@ void loop()
   {
     WS_BROADCAST_TXT("going to sleep after being idle\n");
     DPRINT("going to sleep after being idle for :"); DPRINT(idle_time/1000);DPRINTLN(" sec");DFLUSH();
-    digitalWrite(LED_BUILTIN,HIGH);
-
+//    digitalWrite(LED_BUILTIN,HIGH);
     light_sleep();
-    digitalWrite(LED_BUILTIN,LOW);
-    
+//    digitalWrite(LED_BUILTIN,LOW);
+    //now that we're awake , add the sleep time to the previous value
+    sleep_time += (RTCmillis() - sleep_time_start);
+    awake_count++; //we're awake one more time , so increment the counter
     last_publish_time = millis();
     delay(10);
     setupWiFi();
