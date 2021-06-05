@@ -19,8 +19,8 @@
 #define DEBUG //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 //#define USE_WEBSOCKETS
 #define USE_OTA
+#define FLOW_METER_TANK
 //  ***************** HASH DEFINES *******************************************
-
 
 
 #include <ESP8266WiFi.h>
@@ -38,10 +38,9 @@
 
 ESP8266WebServer server;
 
-#define FLOW_METER_TANK
 #include "flow_meter_config.h"
 
-#define VERSION "1.2.0"
+#define VERSION "1.2.1"
 const char compile_version[] = VERSION __DATE__ " " __TIME__;
 
 const char ssid[] = SSID1; //SSID of WiFi to connect to
@@ -238,9 +237,11 @@ void publishMessages(char type)
     StaticJsonDocument<MAX_JSON_LEN> doc;
     if(type == 'A')
     {
-      doc["flow_rate"] = flow_rate;
+      // If you want to round off to 2 decimal places see here : https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
+      // I think it would not be a good idea to round off in a sensor, this should be done in the consumer of this message
+      doc["flow_rate"] = (float)flow_rate;
       doc["flow_unit"] = (factor == 1?"lit/min":"Klit/min");
-      doc["total_volume"] = total_volume;
+      doc["total_volume"] = (float)total_volume; 
       doc["vol_unit"] = (factor == 1?"lit":"Klit");
       doc["uptime"] = (unsigned long)millis()/1000;
       publishJsonMessage(MQTT_BASE_TOPIC STATE_TOPIC,doc,false);
