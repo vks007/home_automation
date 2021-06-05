@@ -7,11 +7,21 @@
  * https://github.com/esp8266/Arduino/tree/master/libraries/esp8266/examples/LowPowerDemo
  * CAUTION: Make sure the MQTT connect and publish code is not within the callback. It creates a lot of issues with reconnecting to MQTT after
  * the expiry of keepalive timeout.
- * TO DO : See the code here to sleep and do MQTT publish, maybe this will avoid the crash problem I am facing with this program
+ * 
+ * LEARNINGS FOR FUTURE
+ * I had mislabeled WAKEUP pin and PULSE pin which was causing the ESP to reset after 7 sec of sleepby WDT. Pl be aware of the pins
+ * If i connect the USB and separate power both to the ESP then i get a few pulses on the PULSE pin due to noise, disconnect USB and it goes away
+ * so dont work with USB connected.
  * https://gitlab.com/diy_bloke/verydeepsleep_mqtt.ino/blob/master/VeryDeepSleep_MQTT.ino
  */
+
+//  ***************** HASH DEFINES ************ THIS SHOULD BE THE FIRST SECTION IN THE CODE BEFORE ANY INCLUDES *******************************
 #define DEBUG //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
-#include "Debugutils.h" 
+//#define USE_WEBSOCKETS
+#define USE_OTA
+//  ***************** HASH DEFINES *******************************************
+
+
 
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
@@ -22,10 +32,10 @@
 #include "secrets.h" 
 #include "version.h" 
 #include "myutils.h" //common utilities
-//#include "ESPOTA.h" //OTA capability
-
-//#define USE_WEBSOCKETS
+#include "Debugutils.h" 
+#include "ESPOTA.h" //OTA capability
 #include "websocket_log.h"
+
 ESP8266WebServer server;
 
 #define FLOW_METER_TANK
@@ -40,8 +50,8 @@ const char ssid_pswd[] = SSID1_PSWD; //Password of WiFi to connect to
 const char* deviceName = "flow_meter_tank";
 
 //GPIO pin defn
-#define PULSE_PIN D1
-#define WAKEUP_PIN D2
+#define PULSE_PIN D2
+#define WAKEUP_PIN D1
 
 //config params
 #define REPORT_INTERVAL 5 // interval in seconds at which the message is posted to MQTT when the ESP is awake , cannot be greater than IDLE_TIME
@@ -136,9 +146,10 @@ void setupWiFi()
       DPRINT("WiFi connected, IP Address:");
       DPRINTLN(WiFi.localIP());
       esp_ip = WiFi.localIP();
-      setupOTA();
+      SETUP_OTA();
       mqtt_client.setServer(MQTT_SERVER1, MQTT_PORT1);
-      connectMQTT();
+      // dont connect to MQTT here, connect when required during publishign of the message
+      //connectMQTT();
       break;
     }
   }
@@ -152,36 +163,36 @@ void setupWiFi()
 bool publishMessage(String topic, String msg,bool retain) {
   if(WiFi.status() != WL_CONNECTED)
       return false;
-  connectMQTT();
-
   WS_BROADCAST_TXT(msg);
   DPRINT(topic);DPRINT("-->");DPRINT(msg);
+  
+  bool result = false;
   //Now publish the message
-  if(mqtt_client.connected())
+  if(connectMQTT())
   {
     //WS_BROADCAST_TXT("Connected to MQTT");
     if (mqtt_client.publish(topic.c_str(), msg.c_str(),retain))
     {
       DPRINTLN(" - OK");
       WS_BROADCAST_TXT(" - OK\n");
-      mqtt_client.disconnect(); //close MQTT connection cleanly
-      return true;
+      result = true;
     }
     else 
     {
       DPRINTLN(" - FAIL");
       WS_BROADCAST_TXT(" - FAIL\n");
-      mqtt_client.disconnect(); //close MQTT connection cleanly
-      return false;
+      result = false;
     }
   }
   else
   {
     WS_BROADCAST_TXT("Not Connected to MQTT\n");
     DPRINTLN("Failed to establish MQTT connection...");
-    return false;
+    result = false;
   }
-  return true;
+  
+  mqtt_client.disconnect(); //close MQTT connection cleanly
+  return result;
 }
 
 bool publishJsonMessage(String topic,StaticJsonDocument<MAX_JSON_LEN> doc,bool retain) {
@@ -276,6 +287,7 @@ void setup() {
   delay(1);
   DPRINTLN("");
   DPRINTLN(compile_version);
+  pinMode(LED_BUILTIN, OUTPUT);
 
   setupWiFi();
 
@@ -305,14 +317,17 @@ void loop()
   {
     WS_BROADCAST_TXT("going to sleep after being idle\n");
     DPRINT("going to sleep after being idle for :"); DPRINT(idle_time/1000);DPRINTLN(" sec");DFLUSH();
+    digitalWrite(LED_BUILTIN,HIGH);
+
     light_sleep();
+    digitalWrite(LED_BUILTIN,LOW);
     
     last_publish_time = millis();
     delay(10);
     setupWiFi();
   }
  
-  ArduinoOTA.handle();
+  HANDLE_OTA();
 
   yield();
 }
