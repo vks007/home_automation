@@ -22,7 +22,9 @@
 #include "secrets.h" 
 #include "version.h" 
 #include "myutils.h" //common utilities
-#include "ESPOTA.h" //OTA capability
+//#include "ESPOTA.h" //OTA capability
+
+//#define USE_WEBSOCKETS
 #include "websocket_log.h"
 ESP8266WebServer server;
 
@@ -43,7 +45,7 @@ const char* deviceName = "flow_meter_tank";
 
 //config params
 #define REPORT_INTERVAL 5 // interval in seconds at which the message is posted to MQTT when the ESP is awake , cannot be greater than IDLE_TIME
-#define IDLE_TIME 120 //300 //idle time in sec beyond which the ESP goes to sleep , to be woken up only by a pulse from the meter
+#define IDLE_TIME 30 //300 //idle time in sec beyond which the ESP goes to sleep , to be woken up only by a pulse from the meter
 
 #define DEBOUNCE_INTERVAL 10 //debouncing time in ms for interrupts
 #define PULSE_PER_LIT 255 //no of pulses the meter counts for 1 lit of water , adjust this for each water meter after calibiration
@@ -74,7 +76,7 @@ IPAddress esp_ip ;
 WiFiClient espClient;
 PubSubClient mqtt_client(espClient);
 
-void ICACHE_RAM_ATTR pulseHandler() {
+void IRAM_ATTR pulseHandler() {
   if((long)(micros() - lastMicros) >= DEBOUNCE_INTERVAL * 1000) {
     Pulses += 1;
     lastMicros = micros();
@@ -152,31 +154,34 @@ bool publishMessage(String topic, String msg,bool retain) {
       return false;
   connectMQTT();
 
-  webSocket.broadcastTXT(msg);
+  WS_BROADCAST_TXT(msg);
   DPRINT(topic);DPRINT("-->");DPRINT(msg);
   //Now publish the message
   if(mqtt_client.connected())
   {
-    //webSocket.broadcastTXT("Connected to MQTT");
+    //WS_BROADCAST_TXT("Connected to MQTT");
     if (mqtt_client.publish(topic.c_str(), msg.c_str(),retain))
     {
       DPRINTLN(" - OK");
-      webSocket.broadcastTXT(" - OK\n");
+      WS_BROADCAST_TXT(" - OK\n");
+      mqtt_client.disconnect(); //close MQTT connection cleanly
       return true;
     }
     else 
     {
       DPRINTLN(" - FAIL");
-      webSocket.broadcastTXT(" - FAIL\n");
+      WS_BROADCAST_TXT(" - FAIL\n");
+      mqtt_client.disconnect(); //close MQTT connection cleanly
       return false;
     }
   }
   else
   {
-    webSocket.broadcastTXT("Not Connected to MQTT\n");
+    WS_BROADCAST_TXT("Not Connected to MQTT\n");
     DPRINTLN("Failed to establish MQTT connection...");
+    return false;
   }
-  
+  return true;
 }
 
 bool publishJsonMessage(String topic,StaticJsonDocument<MAX_JSON_LEN> doc,bool retain) {
@@ -278,11 +283,9 @@ void setup() {
   pinMode(PULSE_PIN, INPUT);
   attachInterrupt(PULSE_PIN, pulseHandler, RISING);
 
-  server.on("/log",[](){
-  server.send_P(200, "text/html", webpage);
-  });
+  WS_SERVER_SETUP();
   server.begin();
-  ws_setup();
+  WS_SETUP();
 
   timerInit();
 //  publishMessages('W');//this is only published once unless the IP changes in between
@@ -290,7 +293,7 @@ void setup() {
 
 void loop() 
 {
-  ws_loop();
+  WS_LOOP();
   server.handleClient();
   
   if(publish_tick)
@@ -300,7 +303,7 @@ void loop()
   unsigned long idle_time = millis() - last_publish_time;
   if(idle_time >= IDLE_TIME * 1000)
   {
-    webSocket.broadcastTXT("going to sleep after being idle\n");
+    WS_BROADCAST_TXT("going to sleep after being idle\n");
     DPRINT("going to sleep after being idle for :"); DPRINT(idle_time/1000);DPRINTLN(" sec");DFLUSH();
     light_sleep();
     
