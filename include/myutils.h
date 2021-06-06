@@ -21,5 +21,9 @@ void safedelay(unsigned int delay_time) {
   delay(remainder);
 }
 
+uint32_t RTCmillis() {
+  // system_get_rtc_time() is in us (but very inaccurate anyway)
+  return (system_get_rtc_time() * (system_rtc_clock_cali_proc() >> 12)) / 1000;
+}
 
 #endif
