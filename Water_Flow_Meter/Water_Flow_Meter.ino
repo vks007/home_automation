@@ -54,7 +54,8 @@ const char* deviceName = "flow_meter_tank";
 
 //config params
 #define REPORT_INTERVAL 5 // interval in seconds at which the message is posted to MQTT when the ESP is awake , cannot be greater than IDLE_TIME
-#define IDLE_TIME 30 //300 //idle time in sec beyond which the ESP goes to sleep , to be woken up only by a pulse from the meter
+#define SENSOR_UPDATE_INTERVAL 1 //interval in seconds at which sensor(flow) values are updated
+#define IDLE_TIME 300 //300 //idle time in sec beyond which the ESP goes to sleep , to be woken up only by a pulse from the meter
 
 #define DEBOUNCE_INTERVAL 10 //debouncing time in ms for interrupts
 #define PULSE_PER_LIT 255 //no of pulses the meter counts for 1 lit of water , adjust this for each water meter after calibiration
@@ -69,7 +70,6 @@ volatile unsigned int last_pulses = 0;
 volatile unsigned int total_pulses = 0;
 volatile float flow_rate = 0.0;//flow rate is per minute
 volatile float total_volume = 0.0;//stores the total volume of liquid since start
-volatile float last_volume = 0.0;//stores the last value of total_volume 
 unsigned long last_publish_time = 0;//stores the no of ms since a message was last published , used to sleep the ESP beyond a certain value
 unsigned long sleep_time_start = 0;
 unsigned long sleep_time = 0;
@@ -82,8 +82,11 @@ unsigned awake_count = 0;
   const float factor = 1.0;
 #endif
 
-os_timer_t publish_timer;
-bool publish_tick = false;//to enable publishing of message on startup
+os_timer_t publish_timer;//timer to publish values to MQTT
+os_timer_t sensor_timer; // timer to calculate latest sensor values
+
+bool publish_tick = true;// flag to keep track of when to enable publishing of message, initial value of true publishes a message on startup
+
 volatile unsigned long lastMicros;
 IPAddress esp_ip ;
 
@@ -91,15 +94,17 @@ WiFiClient espClient;
 PubSubClient mqtt_client(espClient);
 
 void IRAM_ATTR pulseHandler() {
-  if((long)(micros() - lastMicros) >= DEBOUNCE_INTERVAL * 1000) {
+  if((long)(micros() - lastMicros) >= DEBOUNCE_INTERVAL * 1000) { //note DEBOUNCE_INTERVAL is in ms , so multiply by 1000 for microsec
     pulses += 1;
     lastMicros = micros();
   }
 }
 
 void timerInit(void) {
-  os_timer_setfn(&publish_timer, timerCallback, NULL);
+  os_timer_setfn(&publish_timer, publish_timer_callback, NULL);
   os_timer_arm(&publish_timer, 1000 * REPORT_INTERVAL, true);
+  os_timer_setfn(&sensor_timer, sensor_timer_callback, NULL);
+  os_timer_arm(&sensor_timer, 1000 * SENSOR_UPDATE_INTERVAL, true);
 }
 
 boolean connectMQTT()
@@ -153,7 +158,6 @@ void setupWiFi()
       DPRINTLN("");
       DPRINT("WiFi connected, IP Address:");
       DPRINTLN(WiFi.localIP());
-      esp_ip = WiFi.localIP();
       SETUP_OTA();
       mqtt_client.setServer(MQTT_SERVER1, MQTT_PORT1);
       // dont connect to MQTT here, connect when required during publishign of the message
@@ -275,32 +279,55 @@ void publishMessages(char type)
     }
 
     //prepare wifi info message only if the IP has changed, else it was published during setup()
-    if((esp_ip != WiFi.localIP()) && (type == 'W' || type == 'A'))//means the IP add has changed or we want to publish WiFi message forcefully
-      publishWiFimsg();
+    // This will be the case the first time the control comes here as esp_ip will be blank
+    if(esp_ip != WiFi.localIP())
+    {
+      esp_ip = WiFi.localIP();
+      if((type == 'W' || type == 'A'))
+        publishWiFimsg();
+    }
 }
 
-//system_get_rst_info ()
-void timerCallback(void *pArg) {
-  total_pulses += pulses;
-  flow_rate = (float)pulses/(PULSE_PER_LIT*REPORT_INTERVAL)*60.0*factor;
-  last_volume = total_volume; //save last value
-  total_volume = (float)total_pulses/PULSE_PER_LIT*factor;
+/*
+ * calculates the flow rate
+ */
+float calculate_flow_rate()
+{
+  return (float)pulses/(PULSE_PER_LIT*SENSOR_UPDATE_INTERVAL)*60.0*factor;
+}
 
-  //only publish a message if the values have changed, if flow rate changed, total volume would also change so no 
-  //need to check both
-  
-  //if(pulses > 0)
+/*
+ * calculates the flow rate
+ */
+float calculate_total_volume()
+{
+  return (float)total_pulses/PULSE_PER_LIT*factor;
+}
+
+void sensor_timer_callback(void *pArg) {
+/*
+  flow_rate = calculate_flow_rate();
+  total_pulses += pulses;
+  pulses = 0;//reset pulses as this is needed to calculate rate per SENSOR_UPDATE_INTERVAL only
+  total_volume = calculate_total_volume();
+*/
+  total_pulses += pulses;
+  DPRINTLN(total_pulses);
+  flow_rate = (float)pulses/(PULSE_PER_LIT*SENSOR_UPDATE_INTERVAL)*60.0*factor;
+  total_volume = (float)total_pulses/PULSE_PER_LIT*factor;
+  pulses = 0;//reset pulses as this is needed to calculate rate per REPORT_INTERVAL only
+}
+
+
+//system_get_rst_info ()
+
+void publish_timer_callback(void *pArg) {
+  //only publish a message if the values have changed
   if(last_pulses != pulses)
   {
     last_pulses = pulses;
-    pulses = 0;//reset pulses as this is needed to calculate rate per REPORT_INTERVAL only
-    //publishMessages('A');
     publish_tick = true;
   }
-//  else {
-//    DPRINTLN("no change in pulses");
-//    //publishMessages('D');
-//  }
 }
 
 void setup() {

@@ -6,7 +6,7 @@
   #warning "Compiling the program for the device: FLOW METER1"
   #define DEVICE_NAME             "water_flow_meter1"
   #define MQTT_BASE_TOPIC         "home/water/flow_meter_tank/"
-  #define ESP_IP_ADDRESS          IPAddress(192,168,1,70)
+  #define ESP_IP_ADDRESS          IPAddress(192,168,1,78)
   #define VOLUME_UNIT             LIT // could be one of LIT/KLIT (litres / Kilo Litres)
 
 #else
