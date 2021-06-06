@@ -11,6 +11,9 @@
 #include <ArduinoOTA.h>
 #include "Debugutils.h" 
 
+#ifdef USE_OTA
+#define SETUP_OTA() setupOTA()
+#define HANDLE_OTA() ArduinoOTA.handle();
 
 void setupOTA()
 {
@@ -50,4 +53,9 @@ void setupOTA()
   DPRINTLN("OTA Server setup successfully");
 }
 
+#else
+	#define SETUP_OTA()
+	#define HANDLE_OTA()
+#endif
+	
 #endif
