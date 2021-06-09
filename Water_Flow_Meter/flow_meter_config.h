@@ -2,10 +2,11 @@
 #ifndef FLOW_METER_CONFIG_H
 #define FLOW_METER_CONFIG_H
 
-#if defined(FLOW_METER_TANK)
-  #warning "Compiling the program for the device: FLOW METER1"
-  #define DEVICE_NAME             "water_flow_meter1"
-  #define MQTT_BASE_TOPIC         "home/water/flow_meter_tank/"
+#if defined(TANK_FLOW_METER)
+  #warning "Compiling the program for the device: TANK_FLOW_METER"
+  #define DEVICE_ID              "tank_flow_meter"
+  #define DEVICE_NAME             "Tank Flow Meter"
+  #define MQTT_BASE_TOPIC         "home/water/"DEVICE_ID"/"
   #define ESP_IP_ADDRESS          IPAddress(192,168,1,78)
   #define VOLUME_UNIT             LIT // could be one of LIT/KLIT (litres / Kilo Litres)
 

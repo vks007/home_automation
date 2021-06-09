@@ -2,6 +2,8 @@
  * ver 1.0.0 - fully working version. publishes messages to MQTT when data changes
  * ver 1.1.0 - sleep functionality , ESP sleeps if there is no data change for a certain period and wakes up on recieving pulses from the meter
  * TO DO LIST
+ * - set up different timers for updating of flow rate/volume and publishing to mqtt, i tried doing that by setting up two timers
+ * but ran into some hang issues. docs say that a max of 7 software timers can be set up. will try again to see if it works
  * - store data into RTC memory - see if you really want this to happen as power cycling the ESP will not reset stats then, will have to find an alternative to resetting
  * REFERENCES:
  * https://github.com/esp8266/Arduino/tree/master/libraries/esp8266/examples/LowPowerDemo
@@ -16,10 +18,10 @@
  */
 
 //  ***************** HASH DEFINES ************ THIS SHOULD BE THE FIRST SECTION IN THE CODE BEFORE ANY INCLUDES *******************************
-#define DEBUG //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
-//#define USE_WEBSOCKETS
+//#define DEBUG //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
+#define USE_WEBSOCKETS
 #define USE_OTA
-#define FLOW_METER_TANK
+#define TANK_FLOW_METER
 //  ***************** HASH DEFINES *******************************************
 
 
@@ -41,7 +43,7 @@ ESP8266WebServer server;
 #include "flow_meter_config.h"
 
 #define VERSION "1.2.1"
-const char compile_version[] = VERSION __DATE__ " " __TIME__;
+const char compile_version[] = VERSION " " __DATE__ ", " __TIME__;
 
 const char ssid[] = SSID1; //SSID of WiFi to connect to
 const char ssid_pswd[] = SSID1_PSWD; //Password of WiFi to connect to
@@ -54,11 +56,10 @@ const char* deviceName = "flow_meter_tank";
 
 //config params
 #define REPORT_INTERVAL 5 // interval in seconds at which the message is posted to MQTT when the ESP is awake , cannot be greater than IDLE_TIME
-#define SENSOR_UPDATE_INTERVAL 1 //interval in seconds at which sensor(flow) values are updated
 #define IDLE_TIME 300 //300 //idle time in sec beyond which the ESP goes to sleep , to be woken up only by a pulse from the meter
 
 #define DEBOUNCE_INTERVAL 10 //debouncing time in ms for interrupts
-#define PULSE_PER_LIT 255 //no of pulses the meter counts for 1 lit of water , adjust this for each water meter after calibiration
+#define PULSE_PER_LIT 292 //no of pulses the meter counts for 1 lit of water , adjust this for each water meter after calibiration
 #define MAX_MQTT_CONNECT_RETRY 3
 #define MAX_JSON_LEN  200 //max no of characters in a json doc
 #define STATE_TOPIC "state"
@@ -82,11 +83,8 @@ unsigned awake_count = 0;
   const float factor = 1.0;
 #endif
 
-os_timer_t publish_timer;//timer to publish values to MQTT
-os_timer_t sensor_timer; // timer to calculate latest sensor values
-
+os_timer_t publish_timer;
 bool publish_tick = true;// flag to keep track of when to enable publishing of message, initial value of true publishes a message on startup
-
 volatile unsigned long lastMicros;
 IPAddress esp_ip ;
 
@@ -94,17 +92,15 @@ WiFiClient espClient;
 PubSubClient mqtt_client(espClient);
 
 void IRAM_ATTR pulseHandler() {
-  if((long)(micros() - lastMicros) >= DEBOUNCE_INTERVAL * 1000) { //note DEBOUNCE_INTERVAL is in ms , so multiply by 1000 for microsec
+  if((long)(micros() - lastMicros) >= DEBOUNCE_INTERVAL * 1000) {  //note DEBOUNCE_INTERVAL is in ms , so multiply by 1000 for microsec
     pulses += 1;
     lastMicros = micros();
   }
 }
 
 void timerInit(void) {
-  os_timer_setfn(&publish_timer, publish_timer_callback, NULL);
+  os_timer_setfn(&publish_timer, timerCallback, NULL);
   os_timer_arm(&publish_timer, 1000 * REPORT_INTERVAL, true);
-  os_timer_setfn(&sensor_timer, sensor_timer_callback, NULL);
-  os_timer_arm(&sensor_timer, 1000 * SENSOR_UPDATE_INTERVAL, true);
 }
 
 boolean connectMQTT()
@@ -133,7 +129,7 @@ void setupWiFi()
     os_timer_disarm(&publish_timer); //disable the time else it might try to publish messages and fail
   
   WiFi.config(ESP_IP_ADDRESS, GATEWAY1, SUBNET1);
-  WiFi.hostname(DEVICE_NAME);
+  WiFi.hostname(DEVICE_ID);
 //  hostname += String(ESP.getChipId(), HEX);
   DPRINTLN("Hostname: " + WiFi.hostname());
   DPRINT("Connecting to ");DPRINT(ssid);
@@ -205,7 +201,7 @@ bool publishMessage(String topic, String msg,bool retain) {
     result = false;
   }
   
-  mqtt_client.disconnect(); //close MQTT connection cleanly
+//  mqtt_client.disconnect(); //close MQTT connection cleanly
   return result;
 }
 
@@ -216,18 +212,19 @@ bool publishJsonMessage(String topic,StaticJsonDocument<MAX_JSON_LEN> doc,bool r
 
 }
 
-void publishWiFimsg()
+bool publishWiFimsg()
 {
   //prepare the json doc for the wifi message
   StaticJsonDocument<MAX_JSON_LEN> doc;
   doc["ip_address"] = esp_ip.toString();
   doc["mac"] = WiFi.macAddress();
   doc["version"] = compile_version;
-  publishJsonMessage(MQTT_BASE_TOPIC WIFI_TOPIC,doc,true);
+  return publishJsonMessage(MQTT_BASE_TOPIC WIFI_TOPIC,doc,true);
 }
 
 void light_sleep(){
     DPRINTLN("CPU going to sleep, pull WAKE_UP_PIN low to wake it");DFLUSH();
+    mqtt_client.disconnect();
     WiFi.mode(WIFI_OFF);  // you must turn the modem off; using disconnect won't work
     wifi_fpm_set_sleep_type(LIGHT_SLEEP_T);
     gpio_pin_wakeup_enable(GPIO_ID_PIN(WAKEUP_PIN), GPIO_PIN_INTR_LOLEVEL);// only LOLEVEL or HILEVEL interrupts work, no edge, that's a CPU limitation
@@ -282,52 +279,37 @@ void publishMessages(char type)
     // This will be the case the first time the control comes here as esp_ip will be blank
     if(esp_ip != WiFi.localIP())
     {
+      IPAddress old_esp_ip;
+      old_esp_ip = esp_ip;
       esp_ip = WiFi.localIP();
       if((type == 'W' || type == 'A'))
-        publishWiFimsg();
+        if(!publishWiFimsg())
+          esp_ip = old_esp_ip; //if we were not able to publish the message then dont store the new value else it wont get published next time
     }
 }
 
-/*
- * calculates the flow rate
- */
-float calculate_flow_rate()
-{
-  return (float)pulses/(PULSE_PER_LIT*SENSOR_UPDATE_INTERVAL)*60.0*factor;
-}
-
-/*
- * calculates the flow rate
- */
-float calculate_total_volume()
-{
-  return (float)total_pulses/PULSE_PER_LIT*factor;
-}
-
-void sensor_timer_callback(void *pArg) {
-/*
-  flow_rate = calculate_flow_rate();
-  total_pulses += pulses;
-  pulses = 0;//reset pulses as this is needed to calculate rate per SENSOR_UPDATE_INTERVAL only
-  total_volume = calculate_total_volume();
-*/
-  total_pulses += pulses;
-  DPRINTLN(total_pulses);
-  flow_rate = (float)pulses/(PULSE_PER_LIT*SENSOR_UPDATE_INTERVAL)*60.0*factor;
-  total_volume = (float)total_pulses/PULSE_PER_LIT*factor;
-  pulses = 0;//reset pulses as this is needed to calculate rate per REPORT_INTERVAL only
-}
-
-
 //system_get_rst_info ()
-
-void publish_timer_callback(void *pArg) {
-  //only publish a message if the values have changed
+void timerCallback(void *pArg) {
+  total_pulses += pulses;
+  flow_rate = (float)pulses/(PULSE_PER_LIT*REPORT_INTERVAL)*60.0*factor;
+  total_volume = (float)total_pulses/PULSE_PER_LIT*factor;
+//  String msg = String(pulses);
+  WS_BROADCAST_TXT(String(pulses).c_str());
+  //only publish a message if the values have changed, if flow rate changed, total volume would also change so no 
+  //need to check both
+  
+  //if(pulses > 0)
   if(last_pulses != pulses)
   {
     last_pulses = pulses;
+    pulses = 0;//reset pulses as this is needed to calculate rate per REPORT_INTERVAL only
+    //publishMessages('A');
     publish_tick = true;
   }
+//  else {
+//    DPRINTLN("no change in pulses");
+//    //publishMessages('D');
+//  }
 }
 
 void setup() {
