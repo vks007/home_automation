@@ -1,0 +1,19 @@
+
+######################################################
+# PI SHUTDOWN & POWER ON LED
+######################################################
+
+# To enable shutdown and restart of the Pi via a momentary button do the following:
+# install a momentary on button between GPIO3 (Pin 5) and GND on the Pin
+# Add the following line in the file /boot/config.txt and you're done
+# on every press of the button it will either shutdown or restart depending on the current state
+
+# CHANGES TO /BOOT/CONFIG.TXT
+
+# Enable shutting down of Pi using GPIO3 (Pin 5)
+dtoverlay=gpio-shutdown
+
+# To enable showing if the Pi is ON or not:
+# connect a LED between GPIO15 and GND with a 330 ohm limiting resistor
+#Turn ON LED on GPIO15 to indicate the Pi is ON , it turns OFF when Pi is shutdown
+gpio=15=op,dh
