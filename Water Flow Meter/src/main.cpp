@@ -19,7 +19,7 @@
  */
 
 //  ***************** HASH DEFINES ************ THIS SHOULD BE THE FIRST SECTION IN THE CODE BEFORE ANY INCLUDES *******************************
-//#define DEBUG //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
+#define DEBUG //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 #define USE_WEBSOCKETS
 #define USE_OTA
 #define TANK_FLOW_METER
@@ -58,7 +58,8 @@ const char* deviceName = "flow_meter_tank";
 #define WAKEUP_PIN D1
 
 //config params
-#define REPORT_INTERVAL 2 // interval in seconds at which the message is posted to MQTT when the ESP is awake , cannot be greater than IDLE_TIME
+#define SENSOR_UPDATE_INTERVAL 1 //interval to update the sensor values
+#define PUBLISH_INTERVAL 2 // interval in seconds at which the message is posted to MQTT when the ESP is awake , cannot be greater than IDLE_TIME
 #define IDLE_TIME 300 //300 //idle time in sec beyond which the ESP goes to sleep , to be woken up only by a pulse from the meter
 
 #define DEBOUNCE_INTERVAL 10 //debouncing time in ms for interrupts
@@ -69,8 +70,8 @@ const char* deviceName = "flow_meter_tank";
 #define WIFI_TOPIC "wifi"
 #define DEBUG_TOPIC "debug"
 
-volatile unsigned int pulses = 0; //stores the no of pulses detected by the sensor, it is reset after REPORT_INTERVAL
-volatile unsigned int last_pulses = 0; //stores the  value of the pulses since it was last published
+volatile unsigned int pulses = 0; //stores the no of pulses detected by the sensor, it is reset after SENSOR_UPDATE_INTERVAL
+volatile unsigned int last_pulse_rate = 0; //stores the  value of the last pulse_rate since it was last updated
 volatile unsigned int total_pulses = 0; //stores the total pulses since the last restart
 volatile unsigned int pulse_rate = 0; //stores the pulse flow rate in pulses/min
 volatile float flow_rate = 0.0;//flow rate is per minute
@@ -82,7 +83,8 @@ unsigned long up_time = RTCmillis();
 unsigned awake_count = 0;
 
 os_timer_t publish_timer;
-bool publish_tick = true;// flag to keep track of when to enable publishing of message, initial value of true publishes a message on startup
+os_timer_t update_timer;
+bool publish_tick = false;// flag to keep track of when to enable publishing of message
 volatile unsigned long lastMicros;
 IPAddress esp_ip ;
 
@@ -102,7 +104,7 @@ boolean connectMQTT()
   if(!mqtt_client.connected()){
     // Loop until we're reconnected
     char i = MAX_MQTT_CONNECT_RETRY;
-    while (!mqtt_client.connect("flow_meter",MQTT_USER1,MQTT_PSWD1) && i > 0)
+    while (!mqtt_client.connect(WiFi.hostname().c_str(),MQTT_USER1,MQTT_PSWD1) && i > 0)
     {
       DPRINTLN("Attempting MQTT connection...");
       delay(1000);
@@ -168,76 +170,6 @@ bool publishWiFimsg()
   return publishJsonMessage(MQTT_BASE_TOPIC WIFI_TOPIC,doc,true);
 }
 
-void light_sleep(){
-    DPRINTLN("CPU going to sleep, pull WAKE_UP_PIN low to wake it");DFLUSH();
-    WiFi.mode(WIFI_OFF);  // you must turn the modem off; using disconnect won't work
-    wifi_fpm_set_sleep_type(LIGHT_SLEEP_T);
-    gpio_pin_wakeup_enable(GPIO_ID_PIN(WAKEUP_PIN), GPIO_PIN_INTR_LOLEVEL);// only LOLEVEL or HILEVEL interrupts work, no edge, that's a CPU limitation
-    wifi_fpm_open();
-    sleep_time_start = RTCmillis(); //record the time before sleeping
-    wifi_fpm_do_sleep(0xFFFFFFF);  // only 0xFFFFFFF, any other value and it won't disconnect the RTC timer
-    delay(10);  // it goes to sleep during this delay() and waits for an interrupt
-    DPRINTLN(F("Woke up!"));  // the interrupt callback hits before this is executed*/
-    //sometimes the above statement gets printed before actually sleeping off, doesnt happen all the time though
-    //But the code works as expected, the ESP sleeps after printing Woke up
- }
-
-float calc_flow_rate(unsigned int pulse_per_lit)
-{
-  return (float)pulse_rate/pulse_per_lit;
-}
-
-float calc_volume( unsigned int pulse_count,unsigned int pulse_per_lit)
-{
-  return (float)pulse_count/pulse_per_lit;
-}
-
-//system_get_rst_info ()
-void timerCallback(void *pArg) {
-  // TO DO , enter the following two statements in an atomic block (critical section)
-  //collect the value of pulses into a temp variable as pulses can be updated by the interrupt code
-  unsigned int temp = pulses;
-  pulses = 0;//reset pulses as this is needed to calculate rate per REPORT_INTERVAL only
-  // TO DO END
-
-  pulse_rate = (temp/REPORT_INTERVAL)*60.0; //pulse rate in pulses/min
-  unsigned int pulse_per_lit = PULSE_PER_LIT;
-/*
-  if(temp <10)
-    pulse_per_lit = 400;
-  else if(temp <22)
-    pulse_per_lit = 367;
-  else if(temp <29)
-    pulse_per_lit = 314;
-  else if(temp <40)
-    pulse_per_lit = 308;
-  else if(temp <22)
-    pulse_per_lit = 367;
-  else if(temp <22)
-    pulse_per_lit = 367;
-*/
-
-  flow_rate = calc_flow_rate(pulse_per_lit);
-  total_pulses += temp;
-  float increment_volume = calc_volume(temp,pulse_per_lit);
-  total_volume += increment_volume;
-  String msg(temp);
-  msg += ",";
-  WS_BROADCAST_TXT(msg);
-  
-  if(last_pulses != temp)
-  {
-    last_pulses = temp;
-    publish_tick = true;
-  }
-}
-
-
-void timerInit(void) {
-  os_timer_setfn(&publish_timer, timerCallback, NULL);
-  os_timer_arm(&publish_timer, 1000 * REPORT_INTERVAL, true);
-}
-
 /*
  * Publishes messages to MQTT
  * char -> A - All messages , D - only debug messages , W - WiFi message
@@ -272,6 +204,7 @@ void publishMessages(char type)
         //prepare the debug message 
         doc.clear();
         doc["total_pulses"] = total_pulses;
+        doc["pulse_rate"] = pulse_rate;
         publishJsonMessage(MQTT_BASE_TOPIC DEBUG_TOPIC,doc,false);
       #endif
     }
@@ -284,10 +217,88 @@ void publishMessages(char type)
       old_esp_ip = esp_ip;
       esp_ip = WiFi.localIP();
       if((type == 'W' || type == 'A'))
+      {
         if(!publishWiFimsg())
           esp_ip = old_esp_ip; //if we were not able to publish the message then dont store the new value else it wont get published next time
+      }
     }
 }
+
+void light_sleep(){
+    DPRINTLN("CPU going to sleep, pull WAKE_UP_PIN low to wake it");DFLUSH();
+    WiFi.mode(WIFI_OFF);  // you must turn the modem off; using disconnect won't work
+    wifi_fpm_set_sleep_type(LIGHT_SLEEP_T);
+    gpio_pin_wakeup_enable(GPIO_ID_PIN(WAKEUP_PIN), GPIO_PIN_INTR_LOLEVEL);// only LOLEVEL or HILEVEL interrupts work, no edge, that's a CPU limitation
+    wifi_fpm_open();
+    sleep_time_start = RTCmillis(); //record the time before sleeping
+    wifi_fpm_do_sleep(0xFFFFFFF);  // only 0xFFFFFFF, any other value and it won't disconnect the RTC timer
+    delay(10);  // it goes to sleep during this delay() and waits for an interrupt
+    DPRINTLN(F("Woke up!"));  // the interrupt callback hits before this is executed*/
+    //sometimes the above statement gets printed before actually sleeping off, doesnt happen all the time though
+    //But the code works as expected, the ESP sleeps after printing Woke up
+ }
+
+//system_get_rst_info ()
+void publish_timer_callback(void *pArg) {
+  
+  if(last_pulse_rate != pulse_rate)
+  {
+    last_pulse_rate = pulse_rate;
+    publish_tick = true;
+  }
+}
+
+/*
+  Timer callback function to update the various sensor values like flow/volume based on pulses
+*/
+void update_timer_callback(void *pArg) {
+  // TO DO , put the following 2 statements in an atomic block
+  unsigned int temp = pulses;//collect the pulses into a temp variable as pulses can be updated simultaneously in interrupt
+  pulses = 0;//reset pulses as this was needed to calculate rate per SENSOR_UPDATE_INTERVAL only
+  // TO DO END
+  //I tried to get interval via micros() here but the ESP crashed and so I reverted to using SENSOR_UPDATE_INTERVAL here
+  pulse_rate = (temp/(SENSOR_UPDATE_INTERVAL))*60.0; //pulse rate in pulses/min
+  unsigned int pulse_per_lit = PULSE_PER_LIT;//assign a default
+
+  // The flow meter i am using cannot measure low flow rates very accurately , so i adjust the pulse_per_litre value to 
+  // compensate for the non linear values. I have obtained the below values by doing actual measurements of flow with a 
+  // fixed amount of water
+  if(pulse_rate <270)
+    pulse_per_lit = 190;
+  else if(pulse_rate <600)
+    pulse_per_lit = 245;
+  else if(pulse_rate <960)
+    pulse_per_lit = 266;
+  else if(pulse_rate <1200)
+    pulse_per_lit = 280;
+  else if(pulse_rate <2400)
+    pulse_per_lit = 285;
+  else if(pulse_rate <10000)
+    pulse_per_lit = 315;
+
+  flow_rate = (float)pulse_rate/pulse_per_lit;
+  // comparison to ULONG isnt working - not sure why
+  // if((ULONG_MAX - total_pulses) <= temp) //ULONG = 4,29,49,67,295
+     total_pulses += temp;
+  // else
+    // total_pulses = temp; //reset the pulses as we have reached the max limit of unsigned long data type
+
+  float increment_volume = (float)temp/pulse_per_lit;
+  total_volume += increment_volume;
+  #ifdef USE_WEBSOCKETS
+  String msg(temp);
+  msg += ",";
+  #endif
+  WS_BROADCAST_TXT(msg);
+}
+
+void timerInit(void) {
+  os_timer_setfn(&publish_timer, publish_timer_callback, NULL);
+  os_timer_arm(&publish_timer, 1000 * PUBLISH_INTERVAL, true);
+  os_timer_setfn(&update_timer, update_timer_callback, NULL);
+  os_timer_arm(&update_timer, 1000 * SENSOR_UPDATE_INTERVAL, true);
+}
+
 
 void setupWiFi() 
 {
@@ -309,7 +320,7 @@ void setupWiFi()
   WiFi.begin(ssid,ssid_pswd);
   //rest of the steps are handled in the gotIpEventHandler code
  
-  os_timer_arm(&publish_timer, 1000 * REPORT_INTERVAL, true); //re-enable the timer
+  os_timer_arm(&publish_timer, 1000 * PUBLISH_INTERVAL, true); //re-enable the timer
 }
 
 WiFiEventHandler gotIpEventHandler, disconnectedEventHandler;
@@ -331,6 +342,7 @@ void setup() {
     WS_SERVER_SETUP();
     server.begin();
     WS_SETUP();
+    publish_tick = true; // setting it to true to enable publishing of initial messages on startup (WiFi etc)
   });
 
   disconnectedEventHandler = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& event)
@@ -345,7 +357,6 @@ void setup() {
   attachInterrupt(PULSE_PIN, pulseHandler, RISING);
 
   timerInit();
-  publishMessages('A');//this is only published once unless the IP changes in between
 }
 
 void loop() 
