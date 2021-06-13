@@ -3,9 +3,10 @@
  * ver 1.0.0 - fully working version. publishes messages to MQTT when data changes
  * ver 1.1.0 - sleep functionality , ESP sleeps if there is no data change for a certain period and wakes up on recieving pulses from the meter
  * TO DO LIST
- * - set up different timers for updating of flow rate/volume and publishing to mqtt, i tried doing that by setting up two timers
- * but ran into some hang issues. docs say that a max of 7 software timers can be set up. will try again to see if it works
  * - store data into RTC memory - see if you really want this to happen as power cycling the ESP will not reset stats then, will have to find an alternative to resetting
+ * - Implement LWT for MQTT sensor so that i can determine what time is the sensor sleeping vs active
+ * DONE LIST
+ * - set up different timers for updating of flow rate/volume and publishing to mqtt, i tried doing that by setting up two timers
  * REFERENCES:
  * https://github.com/esp8266/Arduino/tree/master/libraries/esp8266/examples/LowPowerDemo
  * https://gitlab.com/diy_bloke/verydeepsleep_mqtt.ino/blob/master/VeryDeepSleep_MQTT.ino
@@ -252,10 +253,13 @@ void publish_timer_callback(void *pArg) {
   Timer callback function to update the various sensor values like flow/volume based on pulses
 */
 void update_timer_callback(void *pArg) {
-  // TO DO , put the following 2 statements in an atomic block
+  // to make the following code atomic implement a critical section by disabling interrupts
+  noInterrupts();
   unsigned int temp = pulses;//collect the pulses into a temp variable as pulses can be updated simultaneously in interrupt
   pulses = 0;//reset pulses as this was needed to calculate rate per SENSOR_UPDATE_INTERVAL only
-  // TO DO END
+  interrupts();
+  // end critical section
+
   //I tried to get interval via micros() here but the ESP crashed and so I reverted to using SENSOR_UPDATE_INTERVAL here
   pulse_rate = (temp/(SENSOR_UPDATE_INTERVAL))*60.0; //pulse rate in pulses/min
   unsigned int pulse_per_lit = PULSE_PER_LIT;//assign a default
