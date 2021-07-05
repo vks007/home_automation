@@ -61,7 +61,7 @@ const char* deviceName = "flow_meter_tank";
 //config params
 #define SENSOR_UPDATE_INTERVAL 1 //interval to update the sensor values
 #define PUBLISH_INTERVAL 2 // interval in seconds at which the message is posted to MQTT when the ESP is awake , cannot be greater than IDLE_TIME
-#define IDLE_TIME 300 //300 //idle time in sec beyond which the ESP goes to sleep , to be woken up only by a pulse from the meter
+#define IDLE_TIME 60 //300 //idle time in sec beyond which the ESP goes to sleep , to be woken up only by a pulse from the meter
 
 #define DEBOUNCE_INTERVAL 10 //debouncing time in ms for interrupts
 #define PULSE_PER_LIT 292 //no of pulses the meter counts for 1 lit of water , adjust this for each water meter after calibiration
