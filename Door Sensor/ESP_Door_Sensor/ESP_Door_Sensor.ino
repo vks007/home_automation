@@ -209,13 +209,13 @@ void publishMessage(short msg_type) {
 
       //I follow google style naming convention for json which is camelCase
       //publish the wifi message
-      String state_json = String("{\"ip_address\":") + WiFi.localIP().toString() + String(",\"mac\":") + WiFi.macAddress() + String("\"}");
+      String state_json = String("{\"ip_address\":\"") + WiFi.localIP().toString() + String("\",\"mac\":\"") + WiFi.macAddress() + String("\"}");
       strcpy(publish_topic,MQTT_TOPIC);
       strcat(publish_topic,"/wifi"); 
       client.publish(publish_topic, state_json.c_str(),true);
       
       //publish the state message
-      state_json = String("{\"upTime\":") + millis() + String(",\"vcc\":") + batt_volt + String(",\"version\":\"") + compile_version + String("\",\"testingMode\":") + testing_mode + String("\"}");
+      state_json = String("{\"upTime\":") + millis() + String(",\"vcc\":") + batt_volt + String(",\"version\":\"") + compile_version + String("\",\"testingMode\":") + testing_mode + String("}");
       strcpy(publish_topic,MQTT_TOPIC);
       strcat(publish_topic,"/state"); 
       client.publish(publish_topic, state_json.c_str(),true);
