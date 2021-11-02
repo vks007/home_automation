@@ -1,5 +1,6 @@
 /*
  * NOTE IMPORTANT : BUILD SETTINGS : File Size: 512K no SPIFFS and no OTA for ESP01 or choose similar size for ESP12
+ * 2.1.1 - moved wifi info to a separate topic , moved other params like ESP type, ssid etc into DoorConfig.h , included compile version
  * 2.0.0 - removed usage of SPIFFS, instead moved to hardcoded values from header file. removed usage of WiFimanager
  * 1.4.1 - removed config of individual topics , rather only take main topic and hard code subsequent paths. Also included more messages to be logged on MQ Broker , like TESTING mode etc
  * 1.4.0 - makes user configuration configurable via a config file (as in Version 1.0)
@@ -23,18 +24,20 @@
 #include <ESP8266WiFi.h>
 
 // Uncomment one of the below define to compile the program for that device
-//#define MAIN_DOOR
+#define MAIN_DOOR
 //#define TERRACE_DOOR
-#define BALCONY_DOOR
-// define module type as either ESP_01 OR ESP_12 as the pin assignments are different for them
-#define ESP_12
-//#define ESP_01
+//#define BALCONY_DOOR
+
 //#define TESTING_MODE //used to prevent using Rx & Tx as input pins , rather use them as normal serial pins for debugging , comment this out during normal operation
 #define DEBUG //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
 
 #include "DoorConfig.h"
 #include "secrets.h" //From /libraries/MyFiles/secrets.h
+
+#define VERSION "2.1.1"
+const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 strings adjacent to each other become pasted together as one long string
+//For some reason I get an error that compile_version is not defined in this scope if I use version.h where the above statement is written, so writing it inline instead.
 
 //Types of messages decoded via the signal pins
 #define SENSOR_NONE 0
@@ -66,8 +69,6 @@
 
 ADC_MODE(ADC_VCC);//connects the internal ADC to VCC pin and enables measuring Vcc
 
-char VERSION[] = "2.1.0"; 
-
 WiFiClient espClient;
 PubSubClient client(espClient);
 
@@ -91,7 +92,7 @@ void setup()
   #endif
   
   DPRINTLN("");
-  DPRINTLN("Version:" + String(VERSION));
+  DPRINTLN("Version:" + String(compile_version));
   DPRINTLN("Going to setup wifi");
   setupWiFi();
   
@@ -100,7 +101,7 @@ void setup()
     DPRINT("WiFi connected, IP Address:");
     DPRINTLN(WiFi.localIP());
     
-    client.setServer(MQTT_SERVER1, MQTT_PORT1);
+    client.setServer(mqtt_broker, mqtt_port);// from secrets.h
 
     //TO DO : you can read the input values in a single statement directly from registers and then compare using a mask
     // TO DO : Shift the reading of pins to before reading config so that even if ATTiny removes the signal, ESP can still take its own time in publishing the message
@@ -149,12 +150,12 @@ void setup()
 
 void setupWiFi() 
 {
-  WiFi.config(ESP_IP_ADDRESS, GATEWAY1, SUBNET1);
+  WiFi.config(ESP_IP_ADDRESS, default_gateway, subnet_mask);//from secrets.h
   WiFi.hostname(DEVICE_NAME);// Set Hostname.
   DPRINTLN(".....");
   
   WiFi.mode(WIFI_STA); // Force to station mode because if device was switched off while in access point mode it will start up next time in access point mode.
-  WiFi.begin(SSID1,SSID1_PSWD);
+  WiFi.begin(WiFi_SSID,WiFi_SSID_PSWD);
   for(short i=0;i<3000;i++) //break after 30 sec 3000*10 msec
   {
     if(WiFi.status() != WL_CONNECTED)
@@ -181,7 +182,7 @@ void publishMessage(short msg_type) {
     strcpy(publish_topic,MQTT_TOPIC);
     strcat(publish_topic,"/LWT"); 
     // Attempt to connect
-    if (client.connect(DEVICE_NAME,MQTT_USER1,MQTT_PSWD1,publish_topic,0,true,"online")) {
+    if (client.connect(DEVICE_NAME,mqtt_uname,mqtt_pswd,publish_topic,0,true,"offline")) {//credentials come from secrets.h
       DPRINTLN("connected");
       strcpy(publish_topic,MQTT_TOPIC);
       strcat(publish_topic,"/status");
@@ -207,11 +208,18 @@ void publishMessage(short msg_type) {
       #endif
 
       //I follow google style naming convention for json which is camelCase
-      String state_json = String("{\"upTime\":") + millis() + String(",\"vcc\":") + batt_volt + String(",\"version\":\"") + VERSION + String("\",\"testingMode\":") + testing_mode + \
-      String(",\"IPAddr\":\"") + WiFi.localIP().toString() + String("\"}");
+      //publish the wifi message
+      String state_json = String("{\"ip_address\":") + WiFi.localIP().toString() + String(",\"mac\":") + WiFi.macAddress() + String("\"}");
+      strcpy(publish_topic,MQTT_TOPIC);
+      strcat(publish_topic,"/wifi"); 
+      client.publish(publish_topic, state_json.c_str(),true);
+      
+      //publish the state message
+      state_json = String("{\"upTime\":") + millis() + String(",\"vcc\":") + batt_volt + String(",\"version\":\"") + compile_version + String("\",\"testingMode\":") + testing_mode + String("\"}");
       strcpy(publish_topic,MQTT_TOPIC);
       strcat(publish_topic,"/state"); 
       client.publish(publish_topic, state_json.c_str(),true);
+
       DPRINTLN("published messages");
     } 
     else 
