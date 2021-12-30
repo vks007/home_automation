@@ -1,7 +1,7 @@
 
 --MariaDB queries
 SELECT * FROM `states` WHERE entity_id = "device_tracker.xuv_5945" AND attributes LIKE "%\"ignition\": true%" order by created DESC
-SELECT * FROM `states` WHERE entity_id = "sensor.tank_pressure" AND attributes LIKE "%\"ignition\": true%" order by created DESC
+SELECT * FROM `states` WHERE entity_id = "sensor.tank_empty_height" order by created DESC
 SELECT * FROM `states` WHERE entity_id LIKE "%pressure%" AND attributes LIKE "%\"Kpascal\"%" LIMIT 50
 UPDATE states SET attributes = "{\"state_class\": \"measurement\", \"unit_of_measurement\": "%", \"friendly_name\": \"Tank Water Pressure\", \"device_class\": \"voltage\"}"
 UPDATE homeassistant.states SET attributes = REPLACE(attributes, 'KPascal', '%') WHERE state_id = 3657819
@@ -23,7 +23,7 @@ pressure
 --My SQL queries
 
 SELECT state_id,created,state
-FROM "states" WHERE entity_id = "sensor.overhead_tank" ORDER BY state_id DESC 
+FROM "states" WHERE entity_id = "sensor.home_ups_energy_level" ORDER BY state_id DESC 
 
 DELETE FROM "states" 
 WHERE entity_id = "sensor.overhead_tank" 

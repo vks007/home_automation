@@ -14,11 +14,9 @@
   copies or substantial portions of the Software.
 *********/
 /*
- *  This is an example for ESP32 CAM which shows a webpage where you can select the picture properties , get a still image or stream a video stream
- * Settings to use : Module : ESP Wrover Module w/ Partition Scheme as 3MB without OTA 
- * I had trouble with making the camera work with static IP settings. For some reason code copied form ESP8266 example did not work. Make sure you take the code
- * as written in this example of you're setting static IP. for me I was getting time out on the wen page if did the static IP the ESP8266 way although IP was assinged to 
- * ESP32 properly
+ * This is an example for ESP32 CAM which shows a webpage where you can select the picture properties , get a still image or stream a video stream
+ * I had trouble with making the camera work with static IP settings the way we do it for a ESP8266. Below code works fine though.
+ * Earlier I used settings as - Module : ESP Wrover Module w/ Partition Scheme as 3MB without OTA but it works fine with AI Thinker ESP32-CAM so continue using that
 */
 
 
@@ -37,8 +35,8 @@
 #include <ArduinoOTA.h>
 
 //Replace with your network credentials
-const char* ssid = SSID1;
-const char* password = SSID1_PSWD;
+const char* ssid = primary_ssid;
+const char* password = primary_ssid_pswd;
 const char* deviceName = "esp32_cam1";
 
 // Set your Static IP address
@@ -72,10 +70,10 @@ Framesize can be one of:
     FRAMESIZE_SVGA,     // 800x600
     FRAMESIZE_XGA,      // 1024x768
     FRAMESIZE_SXGA,     // 1280x1024
-    FRAMESIZE_UXGA,     // 1600x1200
+    FRAMESIZE_UXGA,     // 1600x1200 This is the max my camera support, dont go beyond this. I get error timeout waiting fro VSYNC above this.
     FRAMESIZE_QXGA,     // 2048*1536
 */    
-#define FRAME_SIZE FRAMESIZE_UXGA //This is the max my camera support, dont go beyond this. I get error timeout waiting fro VSYNC above this.
+#define FRAME_SIZE FRAMESIZE_SVGA
 //#define FRAME_SIZE FRAMESIZE_QVGA // Use this for testing as image vidoe is much faster at this frame size
 
 
