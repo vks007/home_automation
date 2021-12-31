@@ -21,6 +21,7 @@
 #include <ArduinoQueue.h>
 #include <ArduinoOTA.h>
 #include "espnowMessage.h" // for struct of espnow message
+#include "myutils.h"
 
 #define DEBUG //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
@@ -30,8 +31,11 @@ const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 
 #define QUEUE_LENGTH 50
 #define MAX_MESSAGE_LEN 251 // defnies max message length, as the max espnow allows is 250, cant exceed it
 #define ESP_OK 0 // This is defined for ESP32 but not for ESP8266 , so define it
+#define HEALTH_INTERVAL 30e3 // interval is millisecs to publish health message for the gateway
 const char* ssid = WiFi_SSID;
 const char* password = WiFi_SSID_PSWD;
+long last_time = 0;
+long message_count = 0;//keeps track of total no of messages publshed since uptime
 
 ArduinoQueue<espnow_message> structQueue(QUEUE_LENGTH);
 WiFiClient espClient;
@@ -204,6 +208,27 @@ void setup() {
 
 }
 
+/*
+ * creates data for health message and publishes it
+ */
+void publishHealthMessage()
+{
+  StaticJsonDocument<MAX_MESSAGE_LEN> msg_json;
+  msg_json["uptime"] = getReadableTime(millis());
+  msg_json["mem_freeKB"] = (float)ESP.getFreeHeap()/ 1024.0;
+  msg_json["tot_memKB"] = (float)ESP.getFlashChipSize() / 1024.0;
+  msg_json["msg_count"] = message_count;
+  msg_json["queue_len"] = structQueue.itemCount();
+  
+  char publish_topic[65] = "";
+  // create a path for this specific device which is of the form MQTT_BASE_TOPIC/<master_id> , master_id is usually the mac address stripped off the colon eg. MQTT_BASE_TOPIC/2CF43220842D
+  strcpy(publish_topic,MQTT_TOPIC);
+  strcat(publish_topic,"/state");
+
+  String str_msg="";
+  serializeJson(msg_json,str_msg);
+  publishToMQTT(str_msg.c_str(),publish_topic,false);
+}
 
 void loop() {
   client.loop();
@@ -213,8 +238,16 @@ void loop() {
     espnow_message currentMessage;
     currentMessage = structQueue.dequeue();
     publishToMQTT(currentMessage);
+    message_count++;
     // TO DO , see if the message was posted successfully if not then 
     // disable retrieving new messages in the next loop until we run out of queue space
     // then start retriving messages as we're not left with any choice
+  }
+  
+  if(millis() - last_time > HEALTH_INTERVAL)
+  {
+    //collect health params and publish the health message
+    publishHealthMessage();
+    last_time = millis();
   }
 }
