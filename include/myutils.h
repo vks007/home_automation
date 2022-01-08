@@ -48,4 +48,43 @@ X map_Generic(X x, M in_min, N in_max, O out_min, Q out_max){
 }
 */
 
+/*
+ * Converts milli seconds into a readable short string in the format days hour:min:sec ago. example : 5 days 04:09:16 ago
+ */
+String getReadableTime(unsigned long millis) {
+  String readableTime = "";
+  unsigned long seconds;
+  unsigned long minutes;
+  unsigned long hours;
+  unsigned long days;
+
+  seconds = millis / 1000;
+  minutes = seconds / 60;
+  hours = minutes / 60;
+  days = hours / 24;
+  millis %= 1000;
+  seconds %= 60;
+  minutes %= 60;
+  hours %= 24;
+
+  readableTime = String(days) + " ";
+  
+  if (hours < 10) {
+    readableTime += "0";
+  }
+  readableTime += String(hours) + ":";
+
+  if (minutes < 10) {
+    readableTime += "0";
+  }
+  readableTime += String(minutes) + ":";
+
+  if (seconds < 10) {
+    readableTime += "0";
+  }
+  readableTime += String(seconds) + " ago";
+  return readableTime;
+}
+
+
 #endif
