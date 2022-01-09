@@ -49,8 +49,8 @@ ESP8266WebServer server;
 #include "flow_meter_config.h"
 
 
-const char ssid[] = SSID1; //SSID of WiFi to connect to
-const char ssid_pswd[] = SSID1_PSWD; //Password of WiFi to connect to
+const char ssid[] = SSID; //SSID of WiFi to connect to
+const char ssid_pswd[] = SSID_PSWD; //Password of WiFi to connect to
 
 const char* deviceName = "flow_meter_tank";
 

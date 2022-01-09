@@ -1,7 +1,22 @@
+/*
+ * This sketch is a sample sketch for a ESP8266 sensor (controller) using ESP-now. It sends message to a registered slave.
+ * TO DO :
+ * - create an array of slaves and send to the first available one. Try others if one fails. 
+ * - encryption isnt working. Even if I change the keys on the master, the slave is able to receieve the messages, so have to debug later
+ * if you can solve the encryption issue, remove it as with excryption , an eSP8266 can only connect to 6 other peers, ESP32 can connect to 10 other
+ * while without encryption they can connect to 20 peers
+ * - put security code under #define to be able to turn it ON and OFF
+ * - Change the role to COMBO for both slave and Controller so that Slave can also pass on administration messages to the controller.
+ * DONE:
+ * create unique message id, store last id in RTC memory - i decided agianst it as this might result in wear and tear of memory
+ * use the device_name as a filed to set the device name rather than the mac address, default to mac if device name isnt provided.
+ */
+ 
 #include <ESP8266WiFi.h>
 #include <espnow.h>
 #include "secrets.h"
 #include "espnowMessage.h" // for struct of espnow message
+#include "Config.h"
 
 // REPLACE WITH RECEIVER MAC Address , This should be the address of the softAP (and NOT WiFi MAC addr obtained by WiFi.macAddress()) if the Receiver uses both, WiFi & ESPNow
 // You can get the address via the command WiFi.softAPmacAddress() , usually it is one decimal no after WiFi MAC address
@@ -10,6 +25,10 @@ uint8_t broadcastAddress[] = {0x62, 0x01, 0x94, 0x5C, 0xA1, 0x8D};//62:01:94:5C:
 //uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; //Use this if you want to broadcast to all slaves, you could also loop through and send to multiple slaves
 //Note though that in broadcast mode the delivery of messages are auto marked as delivered.
 
+#define SECURITY 1
+uint8_t kok[16]= PMK_KEY_STR;//comes from secrets.h
+uint8_t key[16] = LMK_KEY_STR;// comes from secrets.h
+
 typedef struct esp_now_peer_info {
   u8 peer_addr[6];
   uint8_t channel;
@@ -17,14 +36,11 @@ typedef struct esp_now_peer_info {
 }esp_now_peer_info_t;
 
 
-espnow_message myData;
 unsigned long previousMillis = 0;   // Stores last time temperature was published
 const long interval = 5000;        // Interval at which to publish sensor readings
 unsigned int readingId = 0;
 // Insert your SSID
 constexpr char WIFI_SSID[] = primary_ssid;
-
-char device_id[15];
 
 /*
  * Gets the WiFi channel of the SSID of your router, It has to be on the same channel as this one as the receiver will listen to ESPNow messages on the same 
@@ -43,8 +59,8 @@ int32_t getWiFiChannel(const char *ssid) {
 
 // callback when data is sent
 esp_now_send_cb_t OnDataSent([](uint8_t *mac_addr, uint8_t status) {
-  Serial.print("\r\nLast Packet Send Status:\t");
-  Serial.println(status == 0 ? "Delivery Success" : "Delivery Fail");
+  DPRINT("\r\nLast Packet Send Status:\t");
+  DPRINTLN(status == 0 ? "Delivery Success" : "Delivery Fail");
   if(status != 0)
   {
     //WiFi.printDiag(Serial);
@@ -76,31 +92,24 @@ void setup() {
 
   //Init ESP-NOW
   if (esp_now_init() != 0) {
-    Serial.println("Error initializing ESP-NOW");
+    DPRINTLN("Error initializing ESP-NOW");
     return;
   }
-
+  // Set the PMK key
+  esp_now_set_kok(kok, 16);
+  
   esp_now_set_self_role(ESP_NOW_ROLE_CONTROLLER);
   // Once ESPNow is successfully Init, we will register for Send CB to
   // get the status of Trasnmitted packet
   esp_now_register_send_cb(OnDataSent);
-  
-//  //Register peer
-//  esp_now_peer_info_t peerInfo;
-//  memcpy(peerInfo.peer_addr, broadcastAddress, 6);
-//  peerInfo.encrypt = false;
-  
+    
   //Add peer , There is no method in ESP8266 to add a peer by passing esp_now_peer_info_t object unlike ESP32
-  if (esp_now_add_peer((u8*)broadcastAddress, ESP_NOW_ROLE_SLAVE, channel, NULL, 0) != 0){
-    Serial.println("Failed to add peer");
+  if (esp_now_add_peer((u8*)broadcastAddress, ESP_NOW_ROLE_SLAVE, channel, kok, 16) != 0){
+    DPRINTLN("Failed to add peer");
     return;
   }
+  esp_now_set_peer_key((u8*)broadcastAddress, key, 16);
 
-  String wifiMacString = WiFi.macAddress();
-  wifiMacString.replace(":","");
-  snprintf(device_id, 15, "%s", wifiMacString.c_str());
-  strcpy(device_id,wifiMacString.c_str());
-  Serial.printf("deviceid:%s\n",device_id);
 }
  
 void loop() {
@@ -109,32 +118,43 @@ void loop() {
     // Save the last time a new reading was published
     previousMillis = currentMillis;
     //Set values to send
-    strcpy(myData.device_id,device_id);
-    myData.bytevalue1 = true;
-    myData.bytevalue2 = false;
-    myData.bytevalue3 = true;
-    myData.bytevalue4 = false;
+    static espnow_message myData;
+    // If devicename is not given then generate one from MAC address stripping off the colon
+    if(DEVICE_NAME == "")
+    {
+      String wifiMacString = WiFi.macAddress();
+      wifiMacString.replace(":","");
+      snprintf(myData.device_name, 16, "%s", wifiMacString.c_str());
+    }
+    else
+      strcpy(myData.device_name,DEVICE_NAME);
+    myData.intvalue1 = random(1,1000);
+    myData.intvalue2 = random(1,1000);
+    myData.intvalue3 = random(1,1000);
+    myData.intvalue4 = random(1,1000);
     myData.floatvalue1 = random(1,1000)/1.1;
     myData.floatvalue2 = random(1,1000)/1.1;
     myData.floatvalue3 = random(1,1000)/1.1;
     myData.floatvalue4 = random(1,1000)/1.1;
     strcpy(myData.chardata1,"wemos");
     strcpy(myData.chardata2,"esp01gw");
+
+    
     if(myData.message_id <= UINT_MAX)
       myData.message_id++;
     else
       myData.message_id = 1; //reset if we've reached the limint of int
       
-//    Serial.print("size of packet:");Serial.println(sizeof(myData));
+//    DPRINT("size of packet:");DPRINTLN(sizeof(myData));
 
     //Send message via ESP-NOW , the result here just indicates that a message was sent , not that it was receieved.
     // For that you have to see the status in OnDataSent()
     int result = esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
     if (result == 0) {
-      Serial.println("Sent with success");
+      DPRINTLN("Sent with success");
     }
     else {
-      Serial.println("Error sending the data");
+      DPRINTLN("Error sending the data");
     }
   }
 }
