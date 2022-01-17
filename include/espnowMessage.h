@@ -10,9 +10,9 @@ typedef struct espnow_message{
   char device_name[16];// contains unique device name, falls back to the mac address without colon if device id is not provided
   unsigned long message_id; //unique message id generated for each message
   int intvalue1; // int any data
-  bool intvalue2; // int any data
-  bool intvalue3; // // int any data
-  bool intvalue4; // // int any data
+  int intvalue2; // int any data
+  int intvalue3; // // int any data
+  int intvalue4; // // int any data
   float floatvalue1;// float data
   float floatvalue2;// float data
   float floatvalue3;// float data

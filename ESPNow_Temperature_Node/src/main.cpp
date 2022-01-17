@@ -105,8 +105,9 @@ void setup() {
   wifi_set_channel(channel);
   wifi_promiscuous_enable(false);
   delay(10);
-  byte ch = wifi_get_channel();
+  short ch = wifi_get_channel();
   DPRINT("channel:");DPRINTLN(ch);
+  //strange behavior : If I define ch as byte and make the comparison below , the ESP resets due to WDT and then hangs
   if(ch == 0)
   {
     DPRINTLN("WiFi Channel not set properly, restarting");
