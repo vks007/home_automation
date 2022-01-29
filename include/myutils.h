@@ -86,5 +86,32 @@ String getReadableTime(unsigned long millis) {
   return readableTime;
 }
 
+// Write 16 bit int to RTC memory with checksum, return true if verified OK
+// Slot 0-127
+// (C) Turo Heikkinen 2019 , Source: https://hackaday.io/project/24993/instructions
+bool writeRtcMem(uint16_t *inVal, uint8_t slot = 0) {
+  uint32_t valToStore = *inVal | ((*inVal ^ 0xffff) << 16); //Add checksum
+  uint32_t valFromMemory;
+  if (ESP.rtcUserMemoryWrite(slot, &valToStore, sizeof(valToStore)) &&
+      ESP.rtcUserMemoryRead(slot, &valFromMemory, sizeof(valFromMemory)) &&
+      valToStore == valFromMemory) {
+        return true;
+  }
+  return false;
+}
+
+// Read 16 bit int from RTC memory, return true if checksum OK
+// Only overwrite variable, if checksum OK
+// Slot 0-127
+// (C) Turo Heikkinen 2019 , Source: https://hackaday.io/project/24993/instructions
+bool readRtcMem(uint16_t *inVal, uint8_t slot = 0) {
+  uint32_t valFromMemory;
+  if (ESP.rtcUserMemoryRead(slot, &valFromMemory, sizeof(valFromMemory)) &&
+      ((valFromMemory >> 16) ^ (valFromMemory & 0xffff)) == 0xffff) {
+        *inVal = valFromMemory;
+        return true;
+  }
+  return false;
+}
 
 #endif
