@@ -21,7 +21,7 @@
 #pragma message STR(DEVICE)
 #endif
 */
-#define DEBUG //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
+//#define DEBUG //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
@@ -46,6 +46,7 @@ const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 
 #define SENSOR_WAKEUP 1
 #define SENSOR_OPEN 2
 #define SENSOR_CLOSED 3
+#define SENSOR_IDLE 4
 
 #define MSG_ON 1 //payload for ON
 #define MSG_OFF 0//payload for OFF
@@ -92,6 +93,9 @@ void setup() {
   if(SIGNAL_PIN0 == 1 || SIGNAL_PIN0 == 3)
   {
     pinMode(SIGNAL_PIN0, FUNCTION_3);//Because we're using Rx & Tx as inputs here, we have to set the input type
+  }
+  if(SIGNAL_PIN1 == 1 || SIGNAL_PIN1 == 3)
+  {
     pinMode(SIGNAL_PIN1, FUNCTION_3);//Because we're using Rx & Tx as inputs here, we have to set the input type     
   }
   pinMode(SIGNAL_PIN0, INPUT_PULLUP);
@@ -148,9 +152,9 @@ void setup() {
     strcpy(myData.device_name,DEVICE_NAME);
     myData.intvalue1 = (CURR_MSG == SENSOR_OPEN? MSG_ON:MSG_OFF);
     myData.intvalue2 = ESP.getVcc();
-    myData.intvalue4 = 0;
-    myData.floatvalue1 = 0;
-    myData.floatvalue2 = 0;
+    myData.intvalue4 = CURR_MSG;
+    myData.floatvalue1 = digitalRead(SIGNAL_PIN0);
+    myData.floatvalue2 = digitalRead(SIGNAL_PIN1);
     myData.floatvalue3 = 0;
     myData.floatvalue4 = 0;
     myData.chardata1[0] = '\0';
@@ -164,12 +168,11 @@ void setup() {
 
     #if (TESTING_MODE)// dont kill power to itself in testing mode, delay and keep continuing
     delay(5000);
-    #else
-    //Power down the ESP by writing LOW on HOLD PIN
-    //DPRINTLN("powering down");
-    digitalWrite(HOLD_PIN, LOW);  // set GPIO 0 low this takes CH_PD & powers down the ESP
     #endif
   }
+    // Now you can kill power
+    DPRINTLN("powering down");
+    digitalWrite(HOLD_PIN, LOW);  // set GPIO 0 low this takes CH_PD & powers down the ESP
 
 }
 
