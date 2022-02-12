@@ -11,6 +11,7 @@
 //Specify the sensor this is being compiled for, see Config.h for list of all params for a sensor
 //#define WEMOS_SENSOR
 #define SOLAR_GEYSER_SENSOR
+#define DEBUG (0) //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
@@ -21,9 +22,8 @@
 #include <DallasTemperature.h>
 #include <OneWire.h>
 #include <averager.h>
-
-#define DEBUG //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
+
 #define WAIT_TIMEOUT 50 // time in millis to wait for acknowledgement of the message sent
 #define MAX_MESSAGE_RETRIES 4 // No of times a message is retries to be sent before dropping the message
 #define SLEEP_TIME 60e6 // sleep time interval in microseconds
