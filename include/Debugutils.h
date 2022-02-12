@@ -1,14 +1,15 @@
 /*
  *DebugUtils.h - Simple debugging utilities. Include the file "Debugutils.h in your program.
- * To turn DEBUG ON & OFF put the following statement in your program
- #define DEBUG //this statement should be before the include statement for Debugutils.h
+ * To turn DEBUG ON & OFF put the following statement in your program , this statement should be before the include statement for Debugutils.h
+ #define DEBUG (1) // Turn DEBUG ON
+ #define DEBUG (0) // Turn DEBUG OFF
  #include "Debugutils.h"
 */
 
 #ifndef DEBUGUTILS_H
 #define DEBUGUTILS_H
 
-#ifdef DEBUG
+#if (DEBUG)
   #define DPRINT(...) Serial.print(__VA_ARGS__)
   #define DPRINTLN(...) Serial.println(__VA_ARGS__)
   #define DBEGIN(...) Serial.begin(__VA_ARGS__)
