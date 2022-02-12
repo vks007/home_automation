@@ -14,10 +14,11 @@ It assumes the following constants/variables being defined in the main program
 #include <espnow.h>
 #include "espnowMessage.h" // for struct of espnow message
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
+#include <ESP_EEPROM.h>
 
 #define WAIT_TIMEOUT 25 // time in millis to wait for acknowledgement of the message sent
 #define MAX_MESSAGE_RETRIES 2 // No of times a message is retries to be sent before dropping the message
-uint16_t channel = 0;//stores the channel of the slave by scanning the SSID the slave is on.
+uint8_t channel = 0;//stores the channel of the slave by scanning the SSID the slave is on.
 volatile uint8_t bResult = 9;
 volatile bool bResultReady = false;
 bool channelRefreshed = false;//tracks the status of the change in wifi channel , true -> wifi channel has been refreshed
@@ -52,29 +53,34 @@ uint8_t getWiFiChannel(const char *ssid) {
  * It sets STA mode, reads channel from RTC, if invalid, re-scans channel, sets ESP role
  * Params: forceChannelRefresh : true forces the channel to be scanned again , false: tries to read the channel from RTC memory, if it fails then scans afresh
  */
-void Initilize_espnow(bool forceChannelRefresh = false)
+void Initilize_espnow(bool forceChannelRefresh = false, bool restartOnError= false)
 {
   // Set device as a Wi-Fi Station and set channel
   WiFi.mode(WIFI_STA);
 
   if(!forceChannelRefresh)
   {
-    if(readRtcMem(&channel))
+    if(EEPROM.get(0, channel))
     {
-      DPRINTFLN("wifi channel read from RTC = %d",channel);
+      DPRINTFLN("wifi channel read from memory = %d",channel);
     }
     else
-      DPRINTLN("Failed to read wifi channel from RTC");
+      DPRINTLN("Failed to read wifi channel from memory");
   }
   if((channel <= 0 || channel > 14) || forceChannelRefresh)//we have an invalid channel, it can only range between 1-14 , scan for a valid channel
   {
       channel = getWiFiChannel(WIFI_SSID);
-      if(writeRtcMem(&channel))
+      if(channel != 0)
       {
-        DPRINTFLN("wifi channel written to RTC = %d",channel);
+        if(EEPROM.put(0, channel) && EEPROM.commit())
+        {
+          DPRINTFLN("wifi channel written to memory = %d",channel);
+        }
+        else
+          DPRINTLN("Failed to write wifi channel from memory");
       }
       else
-        DPRINTLN("Failed to write wifi channel from RTC");
+        DPRINTLN("Failed to get a valid channel for " && WIFI_SSID);
   }
 
   WiFi.disconnect(); // trying to see if the issue of sometimes it not setting the right channel gets solved by this.
@@ -87,7 +93,7 @@ void Initilize_espnow(bool forceChannelRefresh = false)
   uint8_t ch = wifi_get_channel();
   DPRINTFLN("channel:%d",ch);
   //strange behavior : If I define ch as byte and make the comparison below , the ESP resets due to WDT and then hangs
-  if(ch == 0)
+  if(ch == 0 && restartOnError)
   {
     DPRINTLN("WiFi Channel not set properly, restarting");
     ESP.restart();
@@ -124,7 +130,7 @@ void send_espnow_message(espnow_message *myData)
   // try to send the message MAX_MESSAGE_RETRIES times if it fails
   for(short i = 0;i<MAX_MESSAGE_RETRIES;i++)
   {
-    DPRINTLN(millis());
+    //DPRINTLN(millis());
     DPRINTLN(myData->intvalue3);
     int result = esp_now_send(gatewayAddress, (uint8_t *) myData, sizeof(*myData));
     // If devicename is not given then generate one from MAC address stripping off the colon
