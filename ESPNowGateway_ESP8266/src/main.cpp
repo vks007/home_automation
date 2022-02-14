@@ -14,15 +14,13 @@
  */
 
 // IMPORTANT : Compile it for the device you want, details of which are in Config.h
-#define GATEWAY_FF
-//#define GATEWAY_GF
 
 #define IN_USE == 1
 #define NOT_IN_USE == 0
 #define USING(feature) 1 feature //macro to check a feature , ref : https://stackoverflow.com/questions/18348625/c-macro-to-enable-and-disable-code-features
 
 //Turn features ON and OFF below
-#define SECURITY IN_USE
+#define SECURITY NOT_IN_USE
 /* For now currently turning OFF security as I am not able to make it work. It works even if the keys aren't the same on controller and slave
  * Also I have to find a way to create a list of multiple controllers as with security you haev to register each controller separately
  * See ref code here: https://www.electrosoftcloud.com/en/security-on-your-esp32-with-esp-now/
@@ -40,8 +38,8 @@
 #include "myutils.h"
 #include <PubSubClient.h>
 
-// define DEBUG to include Serial messages , commnent out to stop Serial messages
-#define DEBUG //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
+
+#define DEBUG (1) //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
 #define VERSION "1.2"
@@ -72,9 +70,9 @@ uint8_t controller_mac[][6] = CONTROLLERS; //from secrets.h
 #if USING(SECURITY)
 uint8_t kok[16]= PMK_KEY_STR;//comes from secrets.h
 uint8_t key[16] = LMK_KEY_STR;// comes from secrets.h
-#elif
-uint8_t kok[16]= NULL;//comes from secrets.h
-uint8_t key[16] = NULL;// comes from secrets.h
+#else
+uint8_t kok[16]= {};//comes from secrets.h
+uint8_t key[16] = {};// comes from secrets.h
 #endif
 
 ArduinoQueue<espnow_message> structQueue(QUEUE_LENGTH);
@@ -277,9 +275,11 @@ void setup() {
   #endif
   for(byte i = 0;i< sizeof(controller_mac)/6;i++)
   {
-    esp_now_add_peer(controller_mac[i], ESP_NOW_ROLE_CONTROLLER, channel, key, 16);
     #if USING(SECURITY)
+    esp_now_add_peer(controller_mac[i], ESP_NOW_ROLE_CONTROLLER, channel, key, 16);
     esp_now_set_peer_key(controller_mac[i], key, 16);
+    #else
+    esp_now_add_peer(controller_mac[i], ESP_NOW_ROLE_CONTROLLER, channel, NULL, 16);
     #endif
   }
 
