@@ -48,7 +48,7 @@ const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 
 #define QUEUE_LENGTH 50
 #define MAX_MESSAGE_LEN 251 // defnies max message length, as the max espnow allows is 250, cant exceed it
 #define ESP_OK 0 // This is defined for ESP32 but not for ESP8266 , so define it
-#define HEALTH_INTERVAL 60e3 // interval is millisecs to publish health message for the gateway
+#define HEALTH_INTERVAL 30e3 // interval is millisecs to publish health message for the gateway
 const char* ssid = WiFi_SSID;
 const char* password = WiFi_SSID_PSWD;
 long last_time = 0;
@@ -120,9 +120,16 @@ bool publishToMQTT(const char msg[],const char topic[], bool retain)
     if(!client.connected())
       reconnectMQTT();
     if(client.connected())
-      return client.publish(topic,msg,retain);
-    else
-      return false;
+      if(client.publish(topic,msg,retain))
+      {
+        DPRINT("publishToMQTT-Success:");DPRINTLN(msg);
+        return true;
+      }
+      else
+      {
+        DPRINT("publishToMQTT-Failed:");DPRINTLN(msg);
+      }
+    return false;
 }
 
 /*
@@ -194,7 +201,7 @@ void publishHealthMessage()
 {
   StaticJsonDocument<MAX_MESSAGE_LEN> msg_json;
   msg_json["uptime"] = getReadableTime(millis());
-  msg_json["mem_freeKB"] = (float)ESP.getFreeHeap()/ 1024.0;
+  msg_json["mem_freeKB"] = serialized(String((float)ESP.getFreeHeap()/ 1024.0,0));//Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
   msg_json["msg_count"] = message_count;
   msg_json["queue_len"] = structQueue.itemCount();
   
@@ -256,6 +263,7 @@ void setup() {
   DPRINTLN(WiFi.localIP());
   DPRINT("Wi-Fi Channel: ");
   DPRINTLN(WiFi.channel());
+  WiFi.setAutoReconnect(true);
 
   if((WiFi.status() == WL_CONNECTED))
   {
