@@ -3,7 +3,12 @@
  * Some points to keep in mind:
  * The gateway connects to an AP (WiFi router) and also listens to espnow messages and this forces the ESP to be on a single channel dictated by the router. Hence the espnow channel is also dictated
  * This means that the masters also have to operate ont he same channel. You can get the channel on the master by scanning the SSID of the router and determining its channel. 
- * 
+ * Features:
+ * - Implements both the WiFi station and ESPNow slave in a single ESP module
+ * - Retries MQTT connection a few times before giving up
+ * - Supports COMBO role where it can receive and send messages
+ * - Publishes initial health message on startup and then a health message at a set interval, stats like msg count, msg rate, queue length, free memory, uptime etc are posted
+ * - Supports OTA
  * 
  * TO DO :
  * - encryption isnt working. Even if I change the keys on the master, the slave is able to receieve the messages, so have to debug later
@@ -11,6 +16,7 @@
  *  while without encryption they can connect to 20 peers, encryption eg from :https://github.com/espressif/ESP8266_NONOS_SDK/issues/114#issuecomment-383521100
  * - Change the role to COMBO for both slave and Controller so that Slave can also pass on administration messages to the controller.
  * - construct the controller topic from its mac address instead of picking it up from the message id. Instead use message id as a string to identify the device name
+ * - Do not pop out the message form the queue in case posting to MQTT isnt successful
  */
 
 // IMPORTANT : Compile it for the device you want, details of which are in Config.h
@@ -52,6 +58,7 @@ const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 
 const char* ssid = WiFi_SSID;
 const char* password = WiFi_SSID_PSWD;
 long last_time = 0;
+long last_message_count = 0;//stores the last count with which message rate was calculated
 long message_count = 0;//keeps track of total no of messages publshed since uptime
 String strIP_address = "";//stores the IP address of the ESP
 bool startup = true; //flag to indicate startup, is set to false at the end of setup()
@@ -204,7 +211,10 @@ void publishHealthMessage()
   msg_json["mem_freeKB"] = serialized(String((float)ESP.getFreeHeap()/ 1024.0,0));//Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
   msg_json["msg_count"] = message_count;
   msg_json["queue_len"] = structQueue.itemCount();
-  
+  float message_rate = (message_count - last_message_count)/(float)(HEALTH_INTERVAL/(60*1000));//rate calculated over one minute
+  last_message_count = message_count;//reset the count
+  msg_json["msg_rate"] = serialized(String(message_rate,1));//format with 1 decimal places, Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
+
   char publish_topic[65] = "";
   // create a path for this specific device which is of the form MQTT_BASE_TOPIC/<master_id> , master_id is usually the mac address stripped off the colon eg. MQTT_BASE_TOPIC/2CF43220842D
   strcpy(publish_topic,MQTT_TOPIC);
