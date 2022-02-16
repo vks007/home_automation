@@ -4,14 +4,16 @@
  * The sketch waks up , supplies power to the senssor , reasa the temperature, creates a structure with all info and sends to the reciever (slave) ESP
  * It then goes to sleep for a defined period. In sleep mode a barebone ESP12 consumes ~20uA current and hence can run on batteries for a lond time.
  * Uses some header files from the includes folder (see include folder for those files)
+ * Features:
+ * - Uses Deep Sleep to conserver power for most of the time
+ * 
+ * 
  * TO DO :
- * - store the last used channel in the RTC memory , it currently spends ~2 sec in obtaining the channel
  * - have multiple slaves to which a message can be tranmitted in the order of preference
  */
-//Specify the sensor this is being compiled for, see Config.h for list of all params for a sensor
-//#define WEMOS_SENSOR
-#define SOLAR_GEYSER_SENSOR
-#define DEBUG (0) //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
+//Specify the sensor this is being compiled for in platform.ini, see Config.h for list of all devices this can be compiled for
+#define DEBUG (1) //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
+#define TESTING (1) // defines if we're in testing mode in which the sensor keeps sending readings in a loop for MAX_MESSAGE_RETRIES
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
@@ -25,10 +27,9 @@
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
 
 #define WAIT_TIMEOUT 50 // time in millis to wait for acknowledgement of the message sent
-#define MAX_MESSAGE_RETRIES 4 // No of times a message is retries to be sent before dropping the message
+#define MAX_MESSAGE_RETRIES 5 // No of times a message is retries to be sent before dropping the message
 #define SLEEP_TIME 60e6 // sleep time interval in microseconds
 #define ONE_WIRE_BUS 4 // gets readings from the data pin of DS18B20 sensor , there should be a pull up from this pin to Vcc
-#define SENSOR_POWER_PIN 5 //supplies power to the sensor module , takes about 0.35mA , so can easily be sourced by GPIO
 #define RESISTOR_CONST 5.61 // constant obtained by Resistor divider network. Vbat----R1---R2---GND . Const = (R1+R2)/R1
         // I have used R1 = 1M , R2=270K. calc factor comes to 4.7 but actual measurements gave me a more precise value of 5.6
 
@@ -42,7 +43,6 @@ typedef struct esp_now_peer_info {// this is defined in esp_now.h for ESP32 but 
 }esp_now_peer_info_t;
 
 espnow_message myData;
-constexpr char WIFI_SSID[] = primary_ssid;// from secrets.h
 volatile bool bSuccess = false;
 volatile bool bResultReady = false;
 char device_id[13];
@@ -51,6 +51,15 @@ DallasTemperature sensors(&oneWire);            // Pass the oneWire reference to
 
 // MAC Address , This should be the address of the softAP (and NOT WiFi MAC addr obtained by WiFi.macAddress()) if the Receiver uses both, WiFi & ESPNow
 // You can get the address via the command WiFi.softAPmacAddress() , usually it is one decimal no after WiFi MAC address
+
+/*
+Function to map float values in a range . map only operates on int values
+*/
+float mapf(float x, float in_min, float in_max, float out_min, float out_max)
+{
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
 
 /*
  * Gets the WiFi channel of the SSID of your router, It has to be on the same channel as this one as the receiver will listen to ESPNow messages on the same 
@@ -140,77 +149,81 @@ void setup() {
   DPRINTF("deviceid:%s\n",device_id);
   digitalWrite(SENSOR_POWER_PIN,HIGH);//set PIN high to given power to the sensor module
 //  DPRINT("setup complete:");DPRINTLN(millis());
+
+  for(short i = 0;i<MAX_MESSAGE_RETRIES;i++)
+  {
+    // supply power to the sensor 
+    sensors.requestTemperatures(); // Send the command to get temperatures
+    myData.floatvalue1 = sensors.getTempCByIndex(0); // get temperature reading for the first sensor
+    DPRINT("Temp:");DPRINTLN(myData.floatvalue1);
+    
+    //measure battery voltage on ADC pin , average it over 10 readings
+    averager<int> avg_batt_volt;
+    for(short i=0;i<10;i++)
+    {
+      avg_batt_volt.append(analogRead(A0));
+      delay(1);
+    }
+    
+    float batt_level = mapf(avg_batt_volt.getAverage(), 0, 1023, 0, RESISTOR_CONST);//from myutils.h
+    //convert batt level into a %tage , 3.5 -> 0% , 4.2 -> 100% (min and max voltages of a Li-Ion battery
+    if(batt_level <=3.5)
+      myData.floatvalue2 = 0;
+    else if(batt_level >= 4.2)
+      myData.floatvalue2 = 100;
+    else
+      myData.floatvalue2 = mapf(batt_level,3.5,4.2,0,100);
+      
+    //Set other values to send
+    // If devicename is not given then generate one from MAC address stripping off the colon
+    if(DEVICE_NAME == "")
+    {
+      String wifiMacString = WiFi.macAddress();
+      wifiMacString.replace(":","");
+      snprintf(myData.device_name, 16, "%s", wifiMacString.c_str());
+    }
+    else
+      strcpy(myData.device_name,DEVICE_NAME);
+    myData.intvalue1 = 0;
+    myData.intvalue2 = 0;
+    myData.intvalue3 = 0;
+    myData.intvalue4 = 0;
+    myData.floatvalue3 = 0;
+    myData.floatvalue4 = 0;
+    strcpy(myData.chardata1,"");
+    strcpy(myData.chardata2,"");
+    myData.message_id = millis();//there is no use of message_id so using it to send the uptime
+      
+    int result = esp_now_send(gatewayAddress, (uint8_t *) &myData, sizeof(myData));
+    long waitTimeStart = millis();
+    if (result == 0) {
+      DPRINTLN("Sent with success");
+    }
+    else {
+      DPRINTLN("Error sending the data");
+    }
+    while(!bResultReady && ((millis() - waitTimeStart) < WAIT_TIMEOUT))
+    {
+      delay(1);
+    }
+    bResultReady = false; // prepare for next iteration
+    #if(!TESTING)
+    {
+      if(bSuccess)
+        break;
+    }
+    #else
+      delay(5);
+    #endif
+  }
+  digitalWrite(SENSOR_POWER_PIN,LOW);//remove power to the sensor module else it consumes power (~ 20uA more)
+  DFLUSH();
+  ESP.deepSleep(SLEEP_TIME);//ESP consumes ~20uA during deep sleep which is great!
+
+
 }
 
-float mapf(float x, float in_min, float in_max, float out_min, float out_max)
-{
-  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
-}
 
 void loop() {
-    for(short i = 0;i<MAX_MESSAGE_RETRIES;i++)
-    {
-      // supply power to the sensor 
-      sensors.requestTemperatures(); // Send the command to get temperatures
-      myData.floatvalue1 = sensors.getTempCByIndex(0); // get temperature reading for the first sensor
-      DPRINT("Temp:");DPRINTLN(myData.floatvalue1);
-      
-      //measure battery voltage on ADC pin , average it over 10 readings
-      averager<int> avg_batt_volt;
-      for(short i=0;i<10;i++)
-      {
-        avg_batt_volt.append(analogRead(A0));
-        delay(1);
-      }
-      
-      float batt_level = mapf(avg_batt_volt.getAverage(), 0, 1023, 0, RESISTOR_CONST);
-      //convert batt level into a %tage , 3.5 -> 0% , 4.2 -> 100% (min and max voltages of a Li-Ion battery
-      if(batt_level <=3.5)
-        myData.floatvalue2 = 0;
-      else if(batt_level >= 4.2)
-        myData.floatvalue2 = 100;
-      else
-        myData.floatvalue2 = mapf(batt_level,3.5,4.2,0,100);
-        
-      //Set other values to send
-      // If devicename is not given then generate one from MAC address stripping off the colon
-      if(DEVICE_NAME == "")
-      {
-        String wifiMacString = WiFi.macAddress();
-        wifiMacString.replace(":","");
-        snprintf(myData.device_name, 16, "%s", wifiMacString.c_str());
-      }
-      else
-        strcpy(myData.device_name,DEVICE_NAME);
-      myData.intvalue1 = 0;
-      myData.intvalue2 = 0;
-      myData.intvalue3 = 0;
-      myData.intvalue4 = 0;
-      myData.floatvalue3 = 0;
-      myData.floatvalue4 = 0;
-      strcpy(myData.chardata1,"");
-      strcpy(myData.chardata2,"");
-      myData.message_id = millis();//there is no use of message_id so using it to send the uptime
-        
-      int result = esp_now_send(gatewayAddress, (uint8_t *) &myData, sizeof(myData));
-      long waitTimeStart = millis();
-      if (result == 0) {
-        DPRINTLN("Sent with success");
-      }
-      else {
-        DPRINTLN("Error sending the data");
-      }
-      while(!bResultReady && ((millis() - waitTimeStart) < WAIT_TIMEOUT))
-      {
-        delay(1);
-      }
-      bResultReady = false; // prepare for next iteration
-      if(bSuccess)
-      {
-        break;
-      }
-    }
-    digitalWrite(SENSOR_POWER_PIN,LOW);//remove power to the sensor module else it consumes power (~ 20uA more)
-    DFLUSH();
-    ESP.deepSleep(SLEEP_TIME);//ESP consumes ~20uA during deep sleep which is great!
+  //Nothing to do here
 }
