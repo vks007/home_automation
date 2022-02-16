@@ -41,12 +41,12 @@ String IpAddress2String(const IPAddress& ipAddress)
   String(ipAddress[3])  ; 
 }
 
-/*
+
 template <class X, class M, class N, class O, class Q>
 X map_Generic(X x, M in_min, N in_max, O out_min, Q out_max){
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
-*/
+
 
 /*
  * Converts milli seconds into a readable short string in the format days hour:min:sec ago. example : 5 days 04:09:16 ago
