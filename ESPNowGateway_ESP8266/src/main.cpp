@@ -17,6 +17,7 @@
  * - Change the role to COMBO for both slave and Controller so that Slave can also pass on administration messages to the controller.
  * - construct the controller topic from its mac address instead of picking it up from the message id. Instead use message id as a string to identify the device name
  * - Do not pop out the message form the queue in case posting to MQTT isnt successful
+ * - Introduce a status LED for MQTT connection status
  */
 
 // IMPORTANT : Compile it for the device you want, details of which are in Config.h
@@ -50,7 +51,7 @@
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
 #define VERSION "1.2"
 const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 strings adjacent to each other become pasted together as one long string
-#define MAX_MQTT_CONNECT_RETRY 2 //max no of retries to connect to MQTT server
+#define MQTT_RETRY_INTERVAL 5000 //MQTT server connection retry interval in milliseconds
 #define QUEUE_LENGTH 50
 #define MAX_MESSAGE_LEN 251 // defnies max message length, as the max espnow allows is 250, cant exceed it
 #define ESP_OK 0 // This is defined for ESP32 but not for ESP8266 , so define it
@@ -60,6 +61,8 @@ const char* password = WiFi_SSID_PSWD;
 long last_time = 0;
 long last_message_count = 0;//stores the last count with which message rate was calculated
 long message_count = 0;//keeps track of total no of messages publshed since uptime
+long lastReconnectAttempt = 0;
+bool last_msg_publish = false;
 String strIP_address = "";//stores the IP address of the ESP
 bool startup = true; //flag to indicate startup, is set to false at the end of setup()
 
@@ -85,38 +88,31 @@ uint8_t key[16] = {};// comes from secrets.h
 ArduinoQueue<espnow_message> structQueue(QUEUE_LENGTH);
 WiFiClient espClient;
 PubSubClient client(espClient);
+static espnow_message emptyMessage;
+espnow_message currentMessage = emptyMessage;
 
 /*
  * connects to MQTT server , publishes LWT message as "online" every time it connects
  */
-void reconnectMQTT()
+bool reconnectMQTT()
 {
-  byte i = 0;
-  while (!client.connected()) 
+  DPRINT("Attempting MQTT connection...");
+  // publishes the LWT message ("online") to the topic,If the this device disconnects from the broker ungracefully then the broker automatically posts the "offline" message on the LWT topic
+  // so that all connected clients know that this device has gone offline
+  char publish_topic[65] = ""; //variable accomodates 50 characters of main topic + 15 char of sub topic
+  strcpy(publish_topic,MQTT_TOPIC);
+  strcat(publish_topic,"/LWT"); 
+  if (client.connect(DEVICE_NAME,mqtt_uname,mqtt_pswd,publish_topic,0,true,"offline")) {//credentials come from secrets.h
+    DPRINTLN("connected");
+    client.publish(publish_topic,"online",true);
+    return true;
+  }
+  else 
   {
-    i++;
-    DPRINT("Attempting MQTT connection...");
-    // Attempt to connect
-    // publishes the LWT message ("online") to the topic,If the this device disconnects from the broker ungracefully then the broker automatically posts the "offline" message on the LWT topic
-    // so that all connected clients know that this device has gone offline
-    char publish_topic[65] = ""; //variable accomodates 50 characters of main topic + 15 char of sub topic
-    strcpy(publish_topic,MQTT_TOPIC);
-    strcat(publish_topic,"/LWT"); 
-    if (client.connect(DEVICE_NAME,mqtt_uname,mqtt_pswd,publish_topic,0,true,"offline")) {//credentials come from secrets.h
-      DPRINTLN("connected");
-      client.publish(publish_topic,"online",true);
-    }
-    else 
-    {
-      DPRINT("failed, rc=");
-      DPRINT(client.state());
-      DPRINTLN(" try again in 1 second");
-      delay(1000);//delay for 1 sec
-    }
-    if(i >= MAX_MQTT_CONNECT_RETRY)
-      break;
-  }//end while
-  
+    DPRINT("failed, rc=");
+    DPRINT(client.state());
+  }
+  return false;
 }
 
 /*
@@ -124,19 +120,19 @@ void reconnectMQTT()
  */
 bool publishToMQTT(const char msg[],const char topic[], bool retain)
 {
-    if(!client.connected())
-      reconnectMQTT();
-    if(client.connected())
-      if(client.publish(topic,msg,retain))
-      {
-        DPRINT("publishToMQTT-Success:");DPRINTLN(msg);
-        return true;
-      }
-      else
-      {
-        DPRINT("publishToMQTT-Failed:");DPRINTLN(msg);
-      }
-    return false;
+  if(client.connected())
+  {
+    if(client.publish(topic,msg,retain))
+    {
+      DPRINT("publishToMQTT-Success:");DPRINTLN(msg);
+      return true;
+    }
+    else
+    {
+      DPRINT("publishToMQTT-Failed:");DPRINTLN(msg);
+    }
+  }
+  return false;
 }
 
 /*
@@ -344,23 +340,42 @@ void setup() {
 
 
 void loop() {
-  client.loop();
+  //check for MQTT connection
+
+  if (!client.connected()) 
+  {
+    long now = millis();
+    if (now - lastReconnectAttempt > MQTT_RETRY_INTERVAL) {
+      lastReconnectAttempt = now;
+      // Attempt to reconnect
+      reconnectMQTT();
+    }
+  } else {
+    // Client connected
+    client.loop();
+  }
+
   ArduinoOTA.handle();
   
-  if (!structQueue.isEmpty()){
-    espnow_message currentMessage;
-    currentMessage = structQueue.dequeue();
-    publishToMQTT(currentMessage);
-    message_count++;
-    // TO DO , see if the message was posted successfully if not then 
-    // disable retrieving new messages in the next loop until we run out of queue space
-    // then start retriving messages as we're not left with any choice
-  }
-  
-  if(millis() - last_time > HEALTH_INTERVAL)
+  if(client.connected())
   {
-    //collect health params and publish the health message
-    publishHealthMessage();
-    last_time = millis();
+    if(last_msg_publish)
+      if(!structQueue.isEmpty())
+        currentMessage = structQueue.dequeue();
+    
+    if(currentMessage != emptyMessage)
+      last_msg_publish = publishToMQTT(currentMessage);
+    if(last_msg_publish)
+    {
+      message_count++;
+      currentMessage = emptyMessage;
+    }
+    
+    if(millis() - last_time > HEALTH_INTERVAL)
+    {
+      //collect health params and publish the health message
+      publishHealthMessage();
+      last_time = millis();
+    }
   }
 }
