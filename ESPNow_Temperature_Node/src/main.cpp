@@ -13,7 +13,7 @@
  */
 //Specify the sensor this is being compiled for in platform.ini, see Config.h for list of all devices this can be compiled for
 #define DEBUG (1) //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
-#define TESTING (1) // defines if we're in testing mode in which the sensor keeps sending readings in a loop for MAX_MESSAGE_RETRIES
+#define TESTING (0) // defines if we're in testing mode in which the sensor keeps sending readings in a loop for MAX_MESSAGE_RETRIES
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
@@ -213,7 +213,7 @@ void setup() {
         break;
     }
     #else
-      delay(5);
+      delay(5000);
     #endif
   }
   digitalWrite(SENSOR_POWER_PIN,LOW);//remove power to the sensor module else it consumes power (~ 20uA more)

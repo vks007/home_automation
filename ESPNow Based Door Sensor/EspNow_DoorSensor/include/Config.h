@@ -38,7 +38,7 @@
   #pragma message "Compiling the program for the device: BALCONY_DOOR"
   #define DEVICE_NAME             "balcony_door"
   #define HOLD_PIN 0  // defines GPIO0 as the hold pin (will hold CH_PD high untill we power down).
-  #define SIGNAL_PIN 4 //Bit 2 of the signal which indicates the message type
+  #define SIGNAL_PIN 3 //Bit 2 of the signal which indicates the message type
   #define MY_ROLE         ESP_NOW_ROLE_COMBO              // set the role of this device: CONTROLLER, SLAVE, COMBO
   #define RECEIVER_ROLE   ESP_NOW_ROLE_COMBO              // set the role of the receiver
   uint8_t gatewayAddress[] = GATEWAY_FF_MAC; //comes from secrets.h
