@@ -114,4 +114,16 @@ bool readRtcMem(uint16_t *inVal, uint8_t slot = 0) {
   return false;
 }
 
+/*
+This short article presents trivial but fast and memory efficient function to compare two strings. 
+Function returns true on success (strings are the same), else false
+Source: https://blog.podkalicki.com/fast-string-comparison-for-microcontrollers/
+*/
+static bool xstrcmp(const char *s1, const char *s2)
+{
+    while(*s1 != '\0' && *s1 == *s2) {s1++; s2++;}
+    return((*s1 - *s2) == 0);
+}
+
+
 #endif
