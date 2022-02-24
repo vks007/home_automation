@@ -9,6 +9,7 @@
  * - Supports COMBO role where it can receive and send messages
  * - Publishes initial health message on startup and then a health message at a set interval, stats like msg count, msg rate, queue length, free memory, uptime etc are posted
  * - Supports OTA
+ * - DONE - Do not pop out the message form the queue in case posting to MQTT isnt successful
  * 
  * TO DO :
  * - encryption isnt working. Even if I change the keys on the master, the slave is able to receieve the messages, so have to debug later
@@ -16,8 +17,8 @@
  *  while without encryption they can connect to 20 peers, encryption eg from :https://github.com/espressif/ESP8266_NONOS_SDK/issues/114#issuecomment-383521100
  * - Change the role to COMBO for both slave and Controller so that Slave can also pass on administration messages to the controller.
  * - construct the controller topic from its mac address instead of picking it up from the message id. Instead use message id as a string to identify the device name
- * - Do not pop out the message form the queue in case posting to MQTT isnt successful
  * - Introduce a status LED for MQTT connection status
+ * - Implement a restart of ESP after configurable interval if the connection to MQTT is not restored
  */
 
 // IMPORTANT : Compile it for the device you want, details of which are in Config.h
