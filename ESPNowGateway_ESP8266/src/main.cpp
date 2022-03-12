@@ -1,24 +1,24 @@
 /*
- * This is a slave (gateway) implemented using a ESP32 which listens to espnow messages from other controllers (masters/sensors) and passes on these messages to MQTT
+ * This is a slave (gateway) implemented using a ESP8266 which listens to espnow messages from other controllers (masters/sensors) and passes on these messages to MQTT
  * Some points to keep in mind:
  * The gateway connects to an AP (WiFi router) and also listens to espnow messages and this forces the ESP to be on a single channel dictated by the router. Hence the espnow channel is also dictated
  * This means that the masters also have to operate ont he same channel. You can get the channel on the master by scanning the SSID of the router and determining its channel. 
  * Features:
  * - Implements both the WiFi station and ESPNow slave in a single ESP module
  * - Retries MQTT connection a few times before giving up
- * - Supports COMBO role where it can receive and send messages
  * - Publishes initial health message on startup and then a health message at a set interval, stats like msg count, msg rate, queue length, free memory, uptime etc are posted
  * - Supports OTA
  * - DONE - Do not pop out the message form the queue in case posting to MQTT isnt successful
  * 
  * TO DO :
- * - encryption isnt working. Even if I change the keys on the master, the slave is able to receieve the messages, so have to debug later
+ * - encryption isnt working. Even if I change the keys on the master to random values, the slave is able to receieve the messages, so have to debug later
  *  if you can solve the encryption issue, remove it as with excryption , an eSP8266 can only connect to 6 other peers, ESP32 can connect to 10 other
  *  while without encryption they can connect to 20 peers, encryption eg from :https://github.com/espressif/ESP8266_NONOS_SDK/issues/114#issuecomment-383521100
  * - Change the role to COMBO for both slave and Controller so that Slave can also pass on administration messages to the controller.
  * - construct the controller topic from its mac address instead of picking it up from the message id. Instead use message id as a string to identify the device name
  * - Introduce a status LED for MQTT connection status
  * - Implement a restart of ESP after configurable interval if the connection to MQTT is not restored
+ * - To Support COMBO role where it can receive and send messages
  */
 
 // IMPORTANT : Compile it for the device you want, details of which are in Config.h
@@ -78,7 +78,7 @@ extern "C"
 // Set global to avoid object removing after setup() routine
 Pinger pinger;
 
-//List of controllers(sensors) who is send messages to this receiver
+//List of controllers(sensors) who will send messages to this receiver
 uint8_t controller_mac[][6] = CONTROLLERS; //from secrets.h
 //example entry : 
 // uint8_t controller_mac[2][6] = {  
@@ -266,6 +266,9 @@ void publishHealthMessage()
 
 }
 
+/*
+ * Initializes the ESP with espnow and WiFi client , OTA etc
+ */
 void setup() {
   // Initialize Serial Monitor
   Serial.begin(115200);
@@ -274,7 +277,7 @@ void setup() {
   device_name.replace("_","-");//hostname dont allow underscores or spaces
   WiFi.hostname(device_name.c_str());// Set Hostname.
   // Set the device as a Station and Soft Access Point simultaneously
-  WiFi.mode(WIFI_AP_STA);
+  WiFi.mode(WIFI_STA);//WIFI_AP_STA
   // Set device as a Wi-Fi Station
   WiFi.begin(ssid, password);
   DPRINTLN("Setting as a Wi-Fi Station..");
@@ -356,6 +359,9 @@ void setup() {
 }
 
 
+/*
+ * runs the loop to check for incoming messages in the queue, picks them up and posts them to MQTT
+ */
 void loop() {
   //check for MQTT connection
 
