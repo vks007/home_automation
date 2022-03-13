@@ -6,6 +6,7 @@
 
 #ifndef SECRETS_H
 #define SECRETS_H
+#include "static_ipaddress.h"
 
 #define primary_ssid "YOUR SSID"
 #define primary_ssid_pswd "YOUR PSWD"
