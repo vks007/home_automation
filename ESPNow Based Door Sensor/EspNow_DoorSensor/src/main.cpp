@@ -1,8 +1,8 @@
 
 /*
- * Sketch for a door sensor. The door sensor power is controlled by a ATTiny to take advantage of the ultra low sleep current of a ATTiny. 
+ * Sketch for a contact sensor. The contact sensor power is controlled by a ATTiny to take advantage of the ultra low sleep current of a ATTiny. 
  * This ESP when it receives power, holds it power by setting CH_HOLD pin to HIGH 
- * It then reads the sensor value of the door contact and sends that to a ESP gateway via espnow
+ * It then reads the sensor value of the contact contact and sends that to a ESP gateway via espnow
  * It then powers itself off by pulling down the CH_HOLD pin.
  * espnow takes ~ 2 sec to obtain the current channel of the SSID, so I store the same in the EEPROM memory and read it every time, saves a lot of time
  * As it rarely changes, the EEPROM isnt worn out. 
@@ -22,7 +22,7 @@
 #endif
 */
 // This is how you assign a numeric value to a #define constant
-#define DEBUG (1) //can be either 0 or 1 , BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
+#define DEBUG (0) //can be either 0 or 1 , BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 
 #include <Arduino.h>
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
@@ -75,13 +75,17 @@ void setup() {
   //Set the HOLD pin HIGH so that the ESP maintains power to itself. We will set it to low once we're done with the job, terminating power to ESP
   DBEGIN(115200);
   DPRINTLN("HOLD HIGH START");
+  pinMode(HOLD_PIN, FUNCTION_3);//Because we're using Rx & Tx as inputs here, we have to set the input type     
   pinMode(HOLD_PIN, OUTPUT);
-  digitalWrite(HOLD_PIN, HIGH);  // sets GPIO0 to high (this holds CH_PD high even if the input signal goes LOW)
-  
+  if(HOLDING_LOGIC == LOGIC_NORMAL)
+    digitalWrite(HOLD_PIN, HIGH);  // sets HOLD_PIN to high
+  else // LOGIC_INVERTED
+    digitalWrite(HOLD_PIN, LOW);  // sets HOLD_PIN to high
+
   //Initialize EEPROM , this is used to store the channel no for espnow in the memory, only stored when it changes which is rare
   EEPROM.begin(16);// 16 is the size of the EEPROM to be allocated, 16 is the minimum
   // For us to use Rx as input we have to define the pins as below else it would continue to be Serial pins
-  if(SIGNAL_PIN == 3)
+  if(SIGNAL_PIN == 1)
   {
     pinMode(SIGNAL_PIN, FUNCTION_3);//Because we're using Rx & Tx as inputs here, we have to set the input type     
   }
@@ -89,6 +93,12 @@ void setup() {
   
   //Init Serial Monitor
   DPRINTLN("Starting up");
+
+  // The following code is to wait for some time before reading the value of the SIGNAL_PIN for a bouncy contact sensor
+  // The one which bounces a few times before settling in on the final value
+  #ifdef BOUNCE_DELAY
+    safedelay(BOUNCE_DELAY*1000);
+  #endif
 
   //Read the value of the sensor on the input pins asap , ATtiny can then remove the signal and the ESP wont care
   if(digitalRead(SIGNAL_PIN) == HIGH)
@@ -136,10 +146,16 @@ void setup() {
   // Now you can kill power
   DPRINTLN("powering down");
   DFLUSH();
-  digitalWrite(HOLD_PIN, LOW);  // set GPIO 0 low this takes CH_PD & powers down the ESP
+  if(HOLDING_LOGIC == LOGIC_NORMAL)
+    digitalWrite(HOLD_PIN, LOW);  // cut power to the ESP
+  else // LOGIC_INVERTED
+    digitalWrite(HOLD_PIN, HIGH);  // cut power to the ESP
+
 }
 
 
 void loop() {
 //nothing to do here, it takes a few ms for the ESP to power down so the control will come here during that time
+// TO DO : send error message here to take care of situaitons where the ESP fails to cut power to itself and so
+// alert the user else the battery may get drained to empty
 }
