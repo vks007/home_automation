@@ -90,9 +90,9 @@ See similar example of sleep using WDT here: https://arduinodiy.wordpress.com/20
 
 #define SIGNAL_PULSE_LENGTH 200 //pulse length in ms to be sent on sensor open event, //Complile this with 1.2 MHz freq
 #define ENABLE_PULSE_LENGTH 250//pulse length in ms to be sent on sensor open event
-#define WAKEUP_COUNT 86400 //wake up interval count, this is a multiple of WDT timer prescaler. Eg. WAKEUP_COUNT* WDT_PRESCALER = Total time in sec, 
+#define WAKEUP_COUNT 14400 //wake up interval count, this is a multiple of WDT timer prescaler. Eg. WAKEUP_COUNT* WDT_PRESCALER = Total time in sec, 
                         //Note: WDT precaling is independent of the clock speed. If WDT is set to 0.5 sec & WAKEUP_COUNT = 7200 , then Wake up time = 7200*0.5 = 3600 sec = 1 hr
-//Example values for WAKEUP_COUNT with WDT set as 0.5 sec: 172800 = 24 hrs , 86400 = 12 hrs
+//Example values for WAKEUP_COUNT with WDT set as 0.5 sec: 172800 = 24 hrs , 86400 = 12 hrs , 60 = 30 sec , 14400 = 2 hrs
 
 //The pins which are connected between ESP and ATTiny are different according to the ESP Type, you may change this to suite your requirement
 #if defined(ESP_12)
@@ -109,7 +109,9 @@ See similar example of sleep using WDT here: https://arduinodiy.wordpress.com/20
   #error "ESP module type not defined correctly"
 #endif
 
-bool sensor_open = false; //indicates that the sensor is in open state
+bool initial_run = true; //flag to indicate that we're starting off for the first wdt event after ATTiny starts up, perform any initial steps in here
+bool prev_sensor_state = false; // Stores the previous state of the sensor , false => sensor closed, true => sensor open
+bool curr_sensor_state = false;
 volatile bool wdt_event = false; // indicates that a WDT event has been fired
 volatile long wakeup_counter = 0; //keeps a count of how many WDT events have been fired
 
@@ -135,10 +137,10 @@ void setup()
   pinMode(ENABLE_PIN, OUTPUT);
   pinMode(SIGNAL_PIN, OUTPUT);
   
-  bit_clear(PORTB, BIT(ENABLE_PIN)); //Write initial values of LOW on ENABLE_PIN
-  //bit_set(PORTB, BIT(SIGNAL_PIN0)); //Write initial values of HIGH on SIGNAL PIN
-  bit_set(PORTB, BIT(SIGNAL_PIN)); //Write initial values of HIGH on SIGNAL PIN
-  bit_set(PORTB, BIT(SWITCH_INPUT1));//enable pull up on PB3
+  bit_clear(PORTB, BIT(ENABLE_PIN)); //Write initial values of LOW on ENABLE_PIN so that the ESP doesnt wake up
+  // The state of other pins doesnt matter as the ENABLE pin anyway is LOW
+  //bit_set(PORTB, BIT(SIGNAL_PIN)); //Write initial values of HIGH on SIGNAL PIN
+  bit_set(PORTB, BIT(SWITCH_INPUT2));
   
   // prescale WDT timer . See section Section 8.5.2 Table 8-2 in datasheet of t13A
   //Set the time interval for WDT timer, WDT will trigger every N secs you configure here to check for the reed switch state
@@ -152,7 +154,6 @@ void setup()
   // Enable watchdog timer interrupts
   WDTCR |= (1<<WDTIE);
   sei(); // Enable global interrupts 
-  
 }
 
 /*
@@ -215,39 +216,42 @@ void loop() {
       bit_clear(PORTB, BIT(SWITCH_INPUT2));
       //give a delay here as the MCU needs some time to stablize the ouput in previous step. Else the MCU may read wrong value
       _delay_us(1);
-      // According to my logic if the bit is set then the sensor is open but it is behaving in an opposite way
-      // havent been able to figure this out so I am just inverting the condition in the if statement below, will worry about it later
-      if(!bit_get(PINB,BIT(SWITCH_INPUT1)))
+      
+      // ATTENTION ****************** IDEALLY the logic below should apply but what's happening is exactly the opposite , I am not able to figure out why
+      // As a result I am sending the opposite state of the door to circumvent it, simply cant get my head around this
+      //SW1 follows SW2 is the switch is closed, else it remains HIGH (due to pullup)
+      // So When we set SW2 LOW , if switch is closed SW1 is LOW , if switch is open when SW1 is HIGH
+      curr_sensor_state = bit_get(PINB,BIT(SWITCH_INPUT1));
+      // force the change in prev state if its the first time we're here to enable sending of message on startup
+      if(initial_run)
       {
-        if(!sensor_open) //send a HIGH pulse on Pb0 only if the sensor was reviously closed
-        {
-          sensor_open = true; //remember the state of the sensor
-          sendSignal(SENSOR_OPEN);
-        }
+        prev_sensor_state = !curr_sensor_state;
+        initial_run = false;
       }
-      else //sensor switch is in closed position
+      
+      if(curr_sensor_state != prev_sensor_state)// this means the contact has changed state, send a message to indicate this
       {
-        if(sensor_open)//send a pulse only if the sensor was open previously
-        {
-          sensor_open = false;
-          sendSignal(SENSOR_CLOSE);
-        }
+        if(curr_sensor_state)
+          sendSignal(SENSOR_CLOSE); // This should be OPEN but as noted above I am sending the opposite state
+        else
+          sendSignal(SENSOR_OPEN); // This should be CLOSE but as noted above I am sending the opposite state
+        prev_sensor_state = curr_sensor_state; //store the state of the sensor
       }
-
-      //We had set SWITCH_INPUT2 LOW only to read the input, SWITCH_INPUT1 , now that we're done set it to HIGH again
-      // PORTB |= 1<<PB4;//Write a HIGH on PB4
-      bit_set(PORTB, BIT(SWITCH_INPUT2));
-
-      //check if its time to wake up anyway irrespective of the sensor position
-      if(wakeup_counter >= WAKEUP_COUNT)
+      else if(wakeup_counter >= WAKEUP_COUNT) //check if its time to wake up anyway irrespective of the sensor position or when its the first time we're here after start up
       {
         wakeup_counter = 0;//reset the counter
         //send the current state of the sensor
-        if(sensor_open)
-          sendSignal(SENSOR_OPEN);
-        else
-          sendSignal(SENSOR_CLOSE);
+      // ATTENTION ****************** The below logic is not working as expected along with the above logic so I am disabling the same for now
+//        if(curr_sensor_state)
+//          sendSignal(SENSOR_CLOSE);
+//        else
+//          sendSignal(SENSOR_OPEN);
       }
+      //else do nothing
+      initial_run = false;
+      //We had set SWITCH_INPUT2 LOW only to read the input, SWITCH_INPUT1 , now that we're done set it to HIGH again
+      // PORTB |= 1<<PB4;//Write a HIGH on PB4
+      bit_set(PORTB, BIT(SWITCH_INPUT2));
       
     } //end if(wdt_event)
     else
