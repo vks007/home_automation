@@ -28,10 +28,10 @@
 
 #define WAIT_TIMEOUT 50 // time in millis to wait for acknowledgement of the message sent
 #define MAX_MESSAGE_RETRIES 5 // No of times a message is retries to be sent before dropping the message
-#define SLEEP_TIME 60e6 // sleep time interval in microseconds
+#define SLEEP_TIME 120e6 // sleep time interval in microseconds
 #define ONE_WIRE_BUS 4 // gets readings from the data pin of DS18B20 sensor , there should be a pull up from this pin to Vcc
-#define RESISTOR_CONST 5.61 // constant obtained by Resistor divider network. Vbat----R1---R2---GND . Const = (R1+R2)/R1
-        // I have used R1 = 1M , R2=270K. calc factor comes to 4.7 but actual measurements gave me a more precise value of 5.6
+#define RESISTOR_CONST 5.156 // constant obtained by Resistor divider network. Vbat----R1---R2---GND . Const = (R1+R2)/R1
+        // I have used R1 = 1M , R2=270K. calc factor comes to 4.7 but actual measurements gave me a more precise value of 5.156
 
 #define MY_ROLE         ESP_NOW_ROLE_COMBO              // set the role of this device: CONTROLLER, SLAVE, COMBO
 #define RECEIVER_ROLE   ESP_NOW_ROLE_COMBO              // set the role of the receiver
@@ -150,6 +150,10 @@ void setup() {
   digitalWrite(SENSOR_POWER_PIN,HIGH);//set PIN high to given power to the sensor module
 //  DPRINT("setup complete:");DPRINTLN(millis());
 
+}
+
+
+void loop() {
   for(short i = 0;i<MAX_MESSAGE_RETRIES;i++)
   {
     // supply power to the sensor 
@@ -162,17 +166,22 @@ void setup() {
     for(short i=0;i<10;i++)
     {
       avg_batt_volt.append(analogRead(A0));
-      delay(1);
+      delay(5);
     }
-    
-    float batt_level = mapf(avg_batt_volt.getAverage(), 0, 1023, 0, RESISTOR_CONST);//from myutils.h
+    myData.intvalue1 = avg_batt_volt.getAverage();
+
+    float batt_level = (avg_batt_volt.getAverage()/1023.0)* RESISTOR_CONST;
+    myData.floatvalue2 = batt_level;
+
     //convert batt level into a %tage , 3.5 -> 0% , 4.2 -> 100% (min and max voltages of a Li-Ion battery
+/*
     if(batt_level <=3.5)
       myData.floatvalue2 = 0;
     else if(batt_level >= 4.2)
       myData.floatvalue2 = 100;
     else
       myData.floatvalue2 = mapf(batt_level,3.5,4.2,0,100);
+*/
       
     //Set other values to send
     // If devicename is not given then generate one from MAC address stripping off the colon
@@ -184,7 +193,7 @@ void setup() {
     }
     else
       strcpy(myData.device_name,DEVICE_NAME);
-    myData.intvalue1 = 0;
+//    myData.intvalue1 = 0;
     myData.intvalue2 = 0;
     myData.intvalue3 = 0;
     myData.intvalue4 = 0;
@@ -216,14 +225,8 @@ void setup() {
       delay(5000);
     #endif
   }
-  digitalWrite(SENSOR_POWER_PIN,LOW);//remove power to the sensor module else it consumes power (~ 20uA more)
   DFLUSH();
+  digitalWrite(SENSOR_POWER_PIN,LOW);//remove power to the sensor module else it consumes power (~ 20uA more)
   ESP.deepSleep(SLEEP_TIME);//ESP consumes ~20uA during deep sleep which is great!
 
-
-}
-
-
-void loop() {
-  //Nothing to do here
 }
