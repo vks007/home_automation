@@ -9,7 +9,7 @@
   #define DEVICE_NAME             "generic_sensor" //max 15 characters without spaces
   #define SENSOR_POWER_PIN        5 //supplies power to the sensor module , takes about 0.35mA , so can easily be sourced by GPIO
   uint8_t gatewayAddress[] = GATEWAY_FF_MAC; //comes from secrets.h
-  constexpr char WIFI_SSID[] = gf_ssid;// from secrets.h
+  constexpr char WIFI_SSID[] = primary_ssid;// from secrets.h
 #elif (DEVICE == SOLAR_GEYSER_SENSOR)
   #define DEVICE_NAME             "solar_geyser" //no spaces as this is used in topic names too
   #define SENSOR_POWER_PIN        5 //supplies power to the sensor module , takes about 0.35mA , so can easily be sourced by GPIO
