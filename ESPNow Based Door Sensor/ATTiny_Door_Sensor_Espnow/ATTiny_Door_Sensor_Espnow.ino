@@ -13,33 +13,41 @@
  *that the sensor is working fine. 
  *The ESP then processes this pulse and does the notification before shutting itself down , The ESP uses espnow to send a message to a gateway but this has no connection to the ATTiny
  *
- *ATtiny connections with ESP01:
+ *ATtiny connections:
  *ATTiny13A
+ *PB5         NC
  *PB3         Sensor contact 1
  *PB4         Sensor contact 2
  *PB1         NC
+ *PB2         NC
+ *GND         GND
+ *Vcc         Vcc
  *
  *Hardware connections between ATTiny and ESP for this circuit when using ESP01 module:
- *Vcc: 3.3 , GND , sensor magnetic switch between PB3 & PB4 , PB0 - o/p to ESP CH_PD , PB1/PB2 - output to Tx/Rx of ESP 
+ *Vcc: 3.3 , GND , sensor magnetic switch between PB3 & PB4 , PB0 - o/p to ESP CH_PD/GPIO0
  *ATTiny13A   ESP8266-01
  *Vcc         Vcc (3V3)
  *GND         GND
- *PB0         CH_PD
- *PB2         Rx //Using Rx has the advantage of a visual led indication when the sensor is in open state
+ *PB0         CH_PD (via diode & resistors) see Schematic for details
+ *PB3         ESP Rx
  *
+ *ATtiny connections:
+ *ATTiny13A
+ *PB5         NC
+ *PB1         Sensor contact 1
+ *PB2         Sensor contact 2
+ *PB3         NC
+ *PB4         NC
+ *GND         GND
+ *Vcc         Vcc
  *Hardware connections between ATTiny and ESP for this circuit when using ESP12 module:
- *Vcc: 3.3 , GND , sensor magnetic switch between PB1 & PB2 , PB0 - o/p to ESP CH_PD , PB3/PB4 - output to GPIO5/GPIO4 of ESP 
+ *Vcc: 3.3 , GND , sensor magnetic switch between PB1 & PB2 , PB0 - o/p to ESP CH_PD
  *ATTiny13A   ESP8266-12
  *Vcc         Vcc
  *GND         GND
- *PB0         CH_PD
- *PB4         GPIO5 //You can any GPIO pins on ESP for this
+ *PB0         CH_PD (via diode & resistors) see Schematic for details
+ *PB1         GPIO4 (Can use any GPIO)
  *
- *ATtiny connections with ESP12:
- *ATTiny13A
- *PB0         Sensor contact 1
- *PB1         Sensor contact 2
- *PB3         NC
  *Concept to read state of the sensor: Here I use the concept of using 2 pins instead of 1 to read the value of a switch. By doing so I avoid the current flowing through the input PIN at all times. Here is what has been done:
  *
  *If you can periodically check the state, using WDT rather than interrupts, then you can check with virtually no power.  Tie the reed switch between two GPIOs and then drive one pin to ground while 
@@ -47,7 +55,7 @@
  *Current consumption analysis : When the sensor is closed, it takes 3 uA while when it is open it takes 700uA which is great!!!
  *MOSFET & HT7333 LDO takes 2uA current always
  *When idle : AT13 takes 7 uA , When active it takes 700 uA
- *On idle the entire circuit takes ~28-30uA , in spite of the fact that the ESP should take zero current when CH_PD is LOW, I think other components end up making up some idle current. I havent investigated this yet
+ *On idle the entire circuit takes ~28-30uA , in spite of the fact that the ESP should take zero current when CH_PD is LOW, I think other components end up making up some idle current. I havent investigated this further
  *One learning for me was that if I use the format of a main function and call setup() and put a infinite loop - then the current csonsumption of the AT is more as compared to
  *using the setup() and loop() construct. I dont know why is that so
  * Full instructable at : https://www.instructables.com/Wireless-Door-Sensor-Ultra-Low-Power/
@@ -84,27 +92,20 @@ See similar example of sleep using WDT here: https://arduinodiy.wordpress.com/20
 #define bit_write(c,p,m) (c ? bit_set(p,m) : bit_clear(p,m))
 #define BIT(x) (0x01 << (x))
 
-//Types of messages sent to the signal pins
-#define SENSOR_OPEN 1 //Sensor open message
-#define SENSOR_CLOSE 2 //Sensor close message
-
-#define SIGNAL_PULSE_LENGTH 200 //pulse length in ms to be sent on sensor open event, //Complile this with 1.2 MHz freq
 #define ENABLE_PULSE_LENGTH 250//pulse length in ms to be sent on sensor open event
-#define WAKEUP_COUNT 14400 //wake up interval count, this is a multiple of WDT timer prescaler. Eg. WAKEUP_COUNT* WDT_PRESCALER = Total time in sec, 
+#define WAKEUP_COUNT 57600 //wake up interval count, this is a multiple of WDT timer prescaler. Eg. WAKEUP_COUNT* WDT_PRESCALER = Total time in sec, 
                         //Note: WDT precaling is independent of the clock speed. If WDT is set to 0.5 sec & WAKEUP_COUNT = 7200 , then Wake up time = 7200*0.5 = 3600 sec = 1 hr
-//Example values for WAKEUP_COUNT with WDT set as 0.5 sec: 172800 = 24 hrs , 86400 = 12 hrs , 60 = 30 sec , 14400 = 2 hrs
+//Example values for WAKEUP_COUNT with WDT set as 0.5 sec: 172800 = 24 hrs , 86400 = 12 hrs , 60 = 30 sec , 57600 = 4 hrs
 
 //The pins which are connected between ESP and ATTiny are different according to the ESP Type, you may change this to suite your requirement
 #if defined(ESP_12)
   #define SWITCH_INPUT1 PB1 //This is connected to the reed switch
   #define SWITCH_INPUT2 PB2 //This is connected to the reed switch
   #define ENABLE_PIN PB0 //This is connected to CH_PD on ESP
-  #define SIGNAL_PIN PB4 //This is connected to GPIO pin on ESP as input. 
 #elif defined(ESP01)
   #define SWITCH_INPUT1 PB3 //This is connected to the reed switch
   #define SWITCH_INPUT2 PB4 //This is connected to the reed switch
   #define ENABLE_PIN PB0 //This is connected to CH_PD on ESP
-  #define SIGNAL_PIN PB2 //This is connected to GPIO pin on ESP as input. 
 #else
   #error "ESP module type not defined correctly"
 #endif
@@ -135,11 +136,9 @@ void setup()
   pinMode(SWITCH_INPUT1, INPUT_PULLUP);
   pinMode(SWITCH_INPUT2, OUTPUT);
   pinMode(ENABLE_PIN, OUTPUT);
-  pinMode(SIGNAL_PIN, OUTPUT);
   
   bit_clear(PORTB, BIT(ENABLE_PIN)); //Write initial values of LOW on ENABLE_PIN so that the ESP doesnt wake up
   // The state of other pins doesnt matter as the ENABLE pin anyway is LOW
-  //bit_set(PORTB, BIT(SIGNAL_PIN)); //Write initial values of HIGH on SIGNAL PIN
   bit_set(PORTB, BIT(SWITCH_INPUT2));
   
   // prescale WDT timer . See section Section 8.5.2 Table 8-2 in datasheet of t13A
@@ -157,31 +156,15 @@ void setup()
 }
 
 /*
- * sendSingnal sends the signal to the ESP module on the two signal pins
+ * enables the ESP module by sending a HIGH to the CH_PD pin
  */
-void sendSignal(byte mode)
+void enableESP()
 {
-  // !!!! IMPORTANT !!!!!!
-  // First send the enable pulse else the logic conditions of the Signal pins can affect the boot mode . I spend many days debugging why ESP was not starting up
-  // It was because I was sending the signal first which held either Rx or Tx LOW , and the ESP wont start
-  
   //Send a short HIGH to enable the ESP
   bit_set(PORTB, BIT(ENABLE_PIN));//send a high pulse on PB0 to wake up the ESP
   _delay_ms(ENABLE_PULSE_LENGTH);
   bit_clear(PORTB, BIT(ENABLE_PIN));//finish the pulse
   _delay_ms(1);
-
-  if(mode == SENSOR_OPEN)//send 1
-  {
-    bit_set(PORTB, BIT(SIGNAL_PIN));
-  }
-  else if(mode == SENSOR_CLOSE)//send 0
-  {
-    bit_clear(PORTB, BIT(SIGNAL_PIN));
-  }
-  
-  _delay_ms(SIGNAL_PULSE_LENGTH);//maintain this signal for a certain time
-  // There is no need to revert the signal to a particular state, I dont see any current consumption difference on either state. havent checked if it anyway reverts to some state during sleep
 
 }
 
@@ -217,10 +200,6 @@ void loop() {
       //give a delay here as the MCU needs some time to stablize the ouput in previous step. Else the MCU may read wrong value
       _delay_us(1);
       
-      // ATTENTION ****************** IDEALLY the logic below should apply but what's happening is exactly the opposite , I am not able to figure out why
-      // As a result I am sending the opposite state of the door to circumvent it, simply cant get my head around this
-      //SW1 follows SW2 is the switch is closed, else it remains HIGH (due to pullup)
-      // So When we set SW2 LOW , if switch is closed SW1 is LOW , if switch is open when SW1 is HIGH
       curr_sensor_state = bit_get(PINB,BIT(SWITCH_INPUT1));
       // force the change in prev state if its the first time we're here to enable sending of message on startup
       if(initial_run)
@@ -231,21 +210,13 @@ void loop() {
       
       if(curr_sensor_state != prev_sensor_state)// this means the contact has changed state, send a message to indicate this
       {
-        if(curr_sensor_state)
-          sendSignal(SENSOR_CLOSE); // This should be OPEN but as noted above I am sending the opposite state
-        else
-          sendSignal(SENSOR_OPEN); // This should be CLOSE but as noted above I am sending the opposite state
+        enableESP();
         prev_sensor_state = curr_sensor_state; //store the state of the sensor
       }
       else if(wakeup_counter >= WAKEUP_COUNT) //check if its time to wake up anyway irrespective of the sensor position or when its the first time we're here after start up
       {
         wakeup_counter = 0;//reset the counter
-        //send the current state of the sensor
-      // ATTENTION ****************** The below logic is not working as expected along with the above logic so I am disabling the same for now
-//        if(curr_sensor_state)
-//          sendSignal(SENSOR_CLOSE);
-//        else
-//          sendSignal(SENSOR_OPEN);
+        enableESP();
       }
       //else do nothing
       initial_run = false;
