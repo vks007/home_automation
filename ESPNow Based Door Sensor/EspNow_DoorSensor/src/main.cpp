@@ -22,7 +22,7 @@
 #endif
 */
 // This is how you assign a numeric value to a #define constant
-#define DEBUG (0) //can be either 0 or 1 , BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
+#define DEBUG (1) //can be either 0 or 1 , BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 
 #include <Arduino.h>
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
