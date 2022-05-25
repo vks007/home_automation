@@ -152,7 +152,7 @@ void send_espnow_message(espnow_message *myData)
         // Scan for the WiFi channel again and store the new value in the RTC memory, Do it only once
         if(!channelRefreshed)
         {
-            DPRINTLN("Re-initialize ESP to rfresh wifi channel");
+            DPRINTLN("Re-initialize ESP to refresh wifi channel");
             Initilize_espnow(true);
             channelRefreshed = true;// this will enable refreshing of channel only once in a cycle
         }

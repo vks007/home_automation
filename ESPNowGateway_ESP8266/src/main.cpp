@@ -67,7 +67,6 @@ long message_count = 0;//keeps track of total no of messages publshed since upti
 long lastReconnectAttempt = 0;
 bool last_msg_publish = false;
 String strIP_address = "";//stores the IP address of the ESP
-bool startup = true; //flag to indicate startup, is set to false at the end of setup()
 
 #define MY_ROLE         ESP_NOW_ROLE_COMBO              // set the role of this device: CONTROLLER, SLAVE, COMBO
 #define RECEIVER_ROLE   ESP_NOW_ROLE_COMBO              // set the role of the receiver
@@ -102,34 +101,45 @@ espnow_message currentMessage = emptyMessage;
 
 /*
  * connects to MQTT server , publishes LWT message as "online" every time it connects
+ * waits for a time defined by MQTT_RETRY_INTERVAL before reconnecting again
+ * I had issues with MQTT nto able to connect at times and so I included pinger to ping the gateway but then the issue hasnt happened for a long time now
  */
 bool reconnectMQTT()
 {
-  DPRINT("Attempting MQTT connection...");
-  // publishes the LWT message ("online") to the topic,If the this device disconnects from the broker ungracefully then the broker automatically posts the "offline" message on the LWT topic
-  // so that all connected clients know that this device has gone offline
-  char publish_topic[65] = ""; //variable accomodates 50 characters of main topic + 15 char of sub topic
-  strcpy(publish_topic,MQTT_TOPIC);
-  strcat(publish_topic,"/LWT"); 
-  if (client.connect(DEVICE_NAME,mqtt_uname,mqtt_pswd,publish_topic,0,true,"offline")) {//credentials come from secrets.h
-    DPRINTLN("connected");
-    client.publish(publish_topic,"online",true);
-    return true;
-  }
-  else 
+  if (!client.connected())
   {
-    DPRINT("failed, rc=");
-    DPRINT(client.state());
-    if(pinger.Ping(WiFi.gatewayIP()))
+    long now = millis();
+    if ((now - lastReconnectAttempt > MQTT_RETRY_INTERVAL) || lastReconnectAttempt == 0) 
     {
-      DPRINT("ping to gateway success");
+      lastReconnectAttempt = now;
+      DPRINT("Attempting MQTT connection...");
+      // publishes the LWT message ("online") to the topic,If the this device disconnects from the broker ungracefully then the broker automatically posts the "offline" message on the LWT topic
+      // so that all connected clients know that this device has gone offline
+      char publish_topic[65] = ""; //variable accomodates 50 characters of main topic + 15 char of sub topic
+      strcpy(publish_topic,MQTT_TOPIC);
+      strcat(publish_topic,"/LWT"); 
+      if (client.connect(DEVICE_NAME,mqtt_uname,mqtt_pswd,publish_topic,0,true,"offline")) {//credentials come from secrets.h
+        DPRINTLN("connected");
+        client.publish(publish_topic,"online",true);
+        return true;
+      }
+      else 
+      {
+        DPRINT("failed, rc=");
+        DPRINT(client.state());
+        if(pinger.Ping(WiFi.gatewayIP()))
+        {
+          DPRINT("ping to gateway success");
+        }
+        else
+        {
+          DPRINT("ping to gateway failed");
+        }
+      }
     }
-    else
-    {
-      DPRINT("ping to gateway failed");
-    }
+    return false;
   }
-  return false;
+  return true;
 }
 
 /*
@@ -141,7 +151,7 @@ bool publishToMQTT(const char msg[],const char topic[], bool retain)
   {
     if(client.publish(topic,msg,retain))
     {
-      DPRINT("publishToMQTT-Success:");DPRINTLN(msg);
+      DPRINT("publishToMQTT-Published:");DPRINTLN(msg);
       return true;
     }
     else
@@ -149,6 +159,7 @@ bool publishToMQTT(const char msg[],const char topic[], bool retain)
       DPRINT("publishToMQTT-Failed:");DPRINTLN(msg);
     }
   }
+  DPRINT("MQTT not connected");
   return false;
 }
 
@@ -216,42 +227,16 @@ void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
 
 /*
  * creates data for health message and publishes it
+ * takes bool param init , if true then publishes the startup message else publishes the health check message
  */
-void publishHealthMessage()
+void publishHealthMessage(bool init=false)
 {
-  StaticJsonDocument<MAX_MESSAGE_LEN> msg_json;
-  msg_json["uptime"] = getReadableTime(millis());
-  msg_json["mem_freeKB"] = serialized(String((float)ESP.getFreeHeap()/ 1024.0,0));//Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
-  msg_json["msg_count"] = message_count;
-  msg_json["queue_len"] = structQueue.itemCount();
-  float message_rate = (message_count - last_message_count)/(float)(HEALTH_INTERVAL/(60*1000));//rate calculated over one minute
-  last_message_count = message_count;//reset the count
-  msg_json["msg_rate"] = serialized(String(message_rate,1));//format with 1 decimal places, Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
-
   char publish_topic[65] = "";
-  // create a path for this specific device which is of the form MQTT_BASE_TOPIC/<master_id> , master_id is usually the mac address stripped off the colon eg. MQTT_BASE_TOPIC/2CF43220842D
-  strcpy(publish_topic,MQTT_TOPIC);
-  strcat(publish_topic,"/state");
   String str_msg="";
-  serializeJson(msg_json,str_msg);
-  publishToMQTT(str_msg.c_str(),publish_topic,false);
 
-
-  // publish the wifi message , I am publishing this everytime because it also has rssi
-  strIP_address = WiFi.localIP().toString();
-  StaticJsonDocument<MAX_MESSAGE_LEN> wifi_msg_json;//It is recommended to create a new obj than reuse the earlier one by ArduinoJson
-  wifi_msg_json["ip_address"] = strIP_address;
-  wifi_msg_json["rssi"] = WiFi.RSSI();
-  strcpy(publish_topic,MQTT_TOPIC);
-  strcat(publish_topic,"/wifi");
-  str_msg="";
-  serializeJson(wifi_msg_json,str_msg);
-  publishToMQTT(str_msg.c_str(),publish_topic,true);
-
-  //Now publish the init message only if we're starting up
-  if(startup)
+  if(init)
   {
-    // publish the init message
+     // publish the init message
     StaticJsonDocument<MAX_MESSAGE_LEN> init_msg_json;//It is recommended to create a new obj than reuse the earlier one by ArduinoJson
     init_msg_json["version"] = compile_version;
     init_msg_json["tot_memKB"] = (float)ESP.getFlashChipSize() / 1024.0;
@@ -261,6 +246,34 @@ void publishHealthMessage()
     strcat(publish_topic,"/init");
     str_msg="";
     serializeJson(init_msg_json,str_msg);
+    publishToMQTT(str_msg.c_str(),publish_topic,true);
+ }
+  else
+  {
+    StaticJsonDocument<MAX_MESSAGE_LEN> msg_json;
+    msg_json["uptime"] = getReadableTime(millis());
+    msg_json["mem_freeKB"] = serialized(String((float)ESP.getFreeHeap()/ 1024.0,0));//Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
+    msg_json["msg_count"] = message_count;
+    msg_json["queue_len"] = structQueue.itemCount();
+    float message_rate = (message_count - last_message_count)/(float)(HEALTH_INTERVAL/(60*1000));//rate calculated over one minute
+    last_message_count = message_count;//reset the count
+    msg_json["msg_rate"] = serialized(String(message_rate,1));//format with 1 decimal places, Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
+
+    // create a path for this specific device which is of the form MQTT_BASE_TOPIC/<master_id> , master_id is usually the mac address stripped off the colon eg. MQTT_BASE_TOPIC/2CF43220842D
+    strcpy(publish_topic,MQTT_TOPIC);
+    strcat(publish_topic,"/state");
+    serializeJson(msg_json,str_msg);
+    publishToMQTT(str_msg.c_str(),publish_topic,false);
+
+    // publish the wifi message , I am publishing this everytime because it also has rssi
+    strIP_address = WiFi.localIP().toString();
+    StaticJsonDocument<MAX_MESSAGE_LEN> wifi_msg_json;//It is recommended to create a new obj than reuse the earlier one by ArduinoJson
+    wifi_msg_json["ip_address"] = strIP_address;
+    wifi_msg_json["rssi"] = WiFi.RSSI();
+    strcpy(publish_topic,MQTT_TOPIC);
+    strcat(publish_topic,"/wifi");
+    str_msg="";
+    serializeJson(wifi_msg_json,str_msg);
     publishToMQTT(str_msg.c_str(),publish_topic,true);
   }
 
@@ -277,7 +290,8 @@ void setup() {
   device_name.replace("_","-");//hostname dont allow underscores or spaces
   WiFi.hostname(device_name.c_str());// Set Hostname.
   // Set the device as a Station and Soft Access Point simultaneously
-  WiFi.mode(WIFI_STA);//WIFI_AP_STA
+  WiFi.mode(WIFI_AP_STA); // This has to be WIFI_AP_STA and not WIFI_STA, I dont know why but if set to WIFI_STA then it can only receive broadcast messages
+  // and stops receiving MAC specific messages.
   // Set device as a Wi-Fi Station
   WiFi.begin(ssid, password);
   DPRINTLN("Setting as a Wi-Fi Station..");
@@ -331,10 +345,10 @@ void setup() {
     }
 
     // NOTE: if updating FS this would be the place to unmount FS using FS.end()
-    Serial.println("Start updating " + type);
+    DPRINTLN("Start updating " + type);
   });
   ArduinoOTA.onEnd([]() {
-    Serial.println("\nEnd");
+    DPRINTLN("\nEnd");
   });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
     DPRINTF("Progress: %u%%\r", (progress / (total / 100)));
@@ -342,20 +356,20 @@ void setup() {
   ArduinoOTA.onError([](ota_error_t error) {
     DPRINTF("Error[%u]: ", error);
     if (error == OTA_AUTH_ERROR) {
-      Serial.println("Auth Failed");
+      DPRINTLN("Auth Failed");
     } else if (error == OTA_BEGIN_ERROR) {
-      Serial.println("Begin Failed");
+      DPRINTLN("Begin Failed");
     } else if (error == OTA_CONNECT_ERROR) {
-      Serial.println("Connect Failed");
+      DPRINTLN("Connect Failed");
     } else if (error == OTA_RECEIVE_ERROR) {
-      Serial.println("Receive Failed");
+      DPRINTLN("Receive Failed");
     } else if (error == OTA_END_ERROR) {
-      Serial.println("End Failed");
+      DPRINTLN("End Failed");
     }
   });
   ArduinoOTA.begin();
-  publishHealthMessage();
-  startup = false;
+  reconnectMQTT(); //connect to MQTT before publishing the startup message
+  publishHealthMessage(true); //publish the startup message
 }
 
 
@@ -367,12 +381,8 @@ void loop() {
 
   if (!client.connected()) 
   {
-    long now = millis();
-    if (now - lastReconnectAttempt > MQTT_RETRY_INTERVAL) {
-      lastReconnectAttempt = now;
-      // Attempt to reconnect
-      reconnectMQTT();
-    }
+    // Attempt to reconnect
+    reconnectMQTT();
   } else {
     // Client connected
     client.loop();
