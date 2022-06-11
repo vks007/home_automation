@@ -20,8 +20,8 @@
   //State Mapping of SIGNAL_PIN0 SIGNAL_PIN1:: 11=>IDLE , 00=> SENSOR_WAKEUP , 01=> SENSOR OPEN , 10=> SENSOR CLOSED
   #define MY_ROLE         ESP_NOW_ROLE_COMBO              // set the role of this device: CONTROLLER, SLAVE, COMBO
   #define RECEIVER_ROLE   ESP_NOW_ROLE_COMBO              // set the role of the receiver
-  uint8_t gatewayAddress[] = GATEWAY_GF_MAC; //comes from secrets.h
-  constexpr char WIFI_SSID[] = gf_ssid;// from secrets.h
+  uint8_t gatewayAddress[] = GATEWAY_FF_MAC; //comes from secrets.h
+  constexpr char WIFI_SSID[] = primary_ssid;// from secrets.h
   #define HOLDING_LOGIC LOGIC_NORMAL
 
 #elif (DEVICE == TERRACE_DOOR)
@@ -34,9 +34,10 @@
   #define RECEIVER_ROLE   ESP_NOW_ROLE_COMBO              // set the role of the receiver
   // gateway MAC Address , This should be the address of the softAP (and NOT WiFi MAC addr obtained by WiFi.macAddress()) if the Receiver uses both, WiFi & ESPNow
   // You can get the address via the command WiFi.softAPmacAddress() , usually it is one decimal no after WiFi MAC address
+  // As a best practice you should define your own custom Soft MAC address so that you dont have to update all your sensors if you change the gateway device
   uint8_t gatewayAddress[] = GATEWAY_FF_MAC; //comes from secrets.h
   constexpr char WIFI_SSID[] = primary_ssid;// from secrets.h
-  #define HOLDING_LOGIC LOGIC_INVERTED
+  #define HOLDING_LOGIC LOGIC_NORMAL
 
 #elif (DEVICE == BALCONY_DOOR)
   #pragma message "Compiling the program for the device: BALCONY_DOOR"
@@ -60,7 +61,7 @@
   uint8_t gatewayAddress[] = GATEWAY_GF_MAC; //comes from secrets.h
   constexpr char WIFI_SSID[] = gf_ssid;// from secrets.h
   #define BOUNCE_DELAY 1 // bounce delay in seconds, this is used for a bumby door which bounces a few times before settling on either open or closed
-  #define HOLDING_LOGIC LOGIC_INVERTED
+  #define HOLDING_LOGIC LOGIC_NORMAL
 
 
 #else
