@@ -29,6 +29,7 @@
 
 //Turn features ON and OFF below
 #define SECURITY NOT_IN_USE
+#define DEBUG (1) //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 /* For now currently turning OFF security as I am not able to make it work. It works even if the keys aren't the same on controller and slave
  * Also I have to find a way to create a list of multiple controllers as with security you haev to register each controller separately
  * See ref code here: https://www.electrosoftcloud.com/en/security-on-your-esp32-with-esp-now/
@@ -46,11 +47,12 @@
 #include "myutils.h"
 #include <PubSubClient.h>
 #include <Pinger.h>
-
-
-#define DEBUG (1) //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
-
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
+#include "espwatchdog.h"
+#include <ezLED.h> // I am using a local copy of this library instead from the std library repo as that has an error in cpp file.
+// The author has defined all functions which take a default argumnent again in the cpp file whereas the default argument should only be 
+// specified in the decleration and not in the implementation of the function.
+
 #define VERSION "1.2"
 const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 strings adjacent to each other become pasted together as one long string
 #define MQTT_RETRY_INTERVAL 5000 //MQTT server connection retry interval in milliseconds
@@ -58,14 +60,18 @@ const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 
 #define MAX_MESSAGE_LEN 251 // defnies max message length, as the max espnow allows is 250, cant exceed it
 #define ESP_OK 0 // This is defined for ESP32 but not for ESP8266 , so define it
 #define HEALTH_INTERVAL 30e3 // interval is millisecs to publish health message for the gateway
+// API_TIMEOUT is used to determine how long to wait for MQTT connection before restarting the ESP
+#ifndef API_TIMEOUT
+  #define API_TIMEOUT 600 // define default timeout of monitoring for MQTT connection if not defined.
+#endif
 const char* ssid = WiFi_SSID;
 const char* password = WiFi_SSID_PSWD;
 long last_time = 0;
 bool retry_message = false;
 long last_message_count = 0;//stores the last count with which message rate was calculated
 long message_count = 0;//keeps track of total no of messages publshed since uptime
-long lastReconnectAttempt = 0;
-bool last_msg_publish = false;
+long lastReconnectAttempt = 0; // Keeps track of the last time an attempt was made to connect to MQTT
+bool initilised = false; // flag to track if initialisation of the ESP has finished. At present it only handles tracking of the "init" message published on startup
 String strIP_address = "";//stores the IP address of the ESP
 
 #define MY_ROLE         ESP_NOW_ROLE_COMBO              // set the role of this device: CONTROLLER, SLAVE, COMBO
@@ -76,6 +82,8 @@ extern "C"
 }
 // Set global to avoid object removing after setup() routine
 Pinger pinger;
+ezLED  statusLED(STATUS_LED);
+watchDog MQTT_wd = watchDog(API_TIMEOUT); // monitors the MQTT connection, if it is disconnected beyond API_TIMEOUT , it restarts ESP
 
 //List of controllers(sensors) who will send messages to this receiver
 uint8_t controller_mac[][6] = CONTROLLERS; //from secrets.h
@@ -112,33 +120,39 @@ bool reconnectMQTT()
     if ((now - lastReconnectAttempt > MQTT_RETRY_INTERVAL) || lastReconnectAttempt == 0) 
     {
       lastReconnectAttempt = now;
-      DPRINT("Attempting MQTT connection...");
+      DPRINTLN("Attempting MQTT connection...");
       // publishes the LWT message ("online") to the topic,If the this device disconnects from the broker ungracefully then the broker automatically posts the "offline" message on the LWT topic
       // so that all connected clients know that this device has gone offline
       char publish_topic[65] = ""; //variable accomodates 50 characters of main topic + 15 char of sub topic
       strcpy(publish_topic,MQTT_TOPIC);
       strcat(publish_topic,"/LWT"); 
       if (client.connect(DEVICE_NAME,mqtt_uname,mqtt_pswd,publish_topic,0,true,"offline")) {//credentials come from secrets.h
-        DPRINTLN("connected");
+        DPRINTLN("MQTT connected");
         client.publish(publish_topic,"online",true);
+        if(statusLED.getState() == LED_BLINKING)
+          statusLED.cancel();
         return true;
       }
-      else 
-      {
-        DPRINT("failed, rc=");
-        DPRINT(client.state());
-        if(pinger.Ping(WiFi.gatewayIP()))
-        {
-          DPRINT("ping to gateway success");
-        }
-        else
-        {
-          DPRINT("ping to gateway failed");
-        }
-      }
+    //   else 
+    //   {
+    //     DPRINT("failed, rc=");
+    //     DPRINT(client.state());
+    //     if(pinger.Ping(WiFi.gatewayIP()))
+    //     {
+    //       DPRINTLN("ping to gateway success");
+    //     }
+    //     else
+    //     {
+    //       DPRINTLN("ping to gateway failed");
+    //     }
+    //   }
     }
+    if(statusLED.getState() == LED_IDLE)
+      statusLED.blink(1000, 500);
     return false;
   }
+  if(statusLED.getState() == LED_BLINKING)
+    statusLED.cancel();
   return true;
 }
 
@@ -159,7 +173,7 @@ bool publishToMQTT(const char msg[],const char topic[], bool retain)
       DPRINT("publishToMQTT-Failed:");DPRINTLN(msg);
     }
   }
-  DPRINT("MQTT not connected");
+  DPRINTLN("Publish failed - MQTT not connected");
   return false;
 }
 
@@ -229,7 +243,7 @@ void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
  * creates data for health message and publishes it
  * takes bool param init , if true then publishes the startup message else publishes the health check message
  */
-void publishHealthMessage(bool init=false)
+bool publishHealthMessage(bool init=false)
 {
   char publish_topic[65] = "";
   String str_msg="";
@@ -246,12 +260,12 @@ void publishHealthMessage(bool init=false)
     strcat(publish_topic,"/init");
     str_msg="";
     serializeJson(init_msg_json,str_msg);
-    publishToMQTT(str_msg.c_str(),publish_topic,true);
- }
+    return publishToMQTT(str_msg.c_str(),publish_topic,true);
+  }
   else
   {
     StaticJsonDocument<MAX_MESSAGE_LEN> msg_json;
-    msg_json["uptime"] = getReadableTime(millis());
+    msg_json["uptime"] = millis()/1000; //publish uptime in seconds
     msg_json["mem_freeKB"] = serialized(String((float)ESP.getFreeHeap()/ 1024.0,0));//Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
     msg_json["msg_count"] = message_count;
     msg_json["queue_len"] = structQueue.itemCount();
@@ -263,20 +277,21 @@ void publishHealthMessage(bool init=false)
     strcpy(publish_topic,MQTT_TOPIC);
     strcat(publish_topic,"/state");
     serializeJson(msg_json,str_msg);
-    publishToMQTT(str_msg.c_str(),publish_topic,false);
-
-    // publish the wifi message , I am publishing this everytime because it also has rssi
-    strIP_address = WiFi.localIP().toString();
-    StaticJsonDocument<MAX_MESSAGE_LEN> wifi_msg_json;//It is recommended to create a new obj than reuse the earlier one by ArduinoJson
-    wifi_msg_json["ip_address"] = strIP_address;
-    wifi_msg_json["rssi"] = WiFi.RSSI();
-    strcpy(publish_topic,MQTT_TOPIC);
-    strcat(publish_topic,"/wifi");
-    str_msg="";
-    serializeJson(wifi_msg_json,str_msg);
-    publishToMQTT(str_msg.c_str(),publish_topic,true);
+    if(publishToMQTT(str_msg.c_str(),publish_topic,false))
+    {
+      // publish the wifi message , I am publishing this everytime because it also has rssi
+      strIP_address = WiFi.localIP().toString();
+      StaticJsonDocument<MAX_MESSAGE_LEN> wifi_msg_json;//It is recommended to create a new obj than reuse the earlier one by ArduinoJson
+      wifi_msg_json["ip_address"] = strIP_address;
+      wifi_msg_json["rssi"] = WiFi.RSSI();
+      strcpy(publish_topic,MQTT_TOPIC);
+      strcat(publish_topic,"/wifi");
+      str_msg="";
+      serializeJson(wifi_msg_json,str_msg);
+      return publishToMQTT(str_msg.c_str(),publish_topic,true);
+   }
   }
-
+  return false;//control will never come here
 }
 
 /*
@@ -285,13 +300,29 @@ void publishHealthMessage(bool init=false)
 void setup() {
   // Initialize Serial Monitor
   Serial.begin(115200);
+  // Set the device as a Station and Soft Access Point simultaneously
+  WiFi.mode(WIFI_AP_STA); // This has to be WIFI_AP_STA and not WIFI_STA, I dont know why but if set to WIFI_STA then it can only receive broadcast messages
+  // and stops receiving MAC specific messages.
+  // Set a custom MAC address for the device. This is helpful in cases where you want to replace the actual ESP device in future
+  // A custom MAC address will allow all sensors to continue working with the new device and you will not be required to update code on all devices
+  uint8_t customMACAddress[] = DEVICE_MAC; // defined in Config.h
+  if(wifi_set_macaddr(SOFTAP_IF, &customMACAddress[0]))
+    {DPRINT("Successfully set a custom MAC address:");
+      DPRINTLN(WiFi.softAPmacAddress());
+    }
+    else
+    {DPRINT("Failed to set MAC address:");}
+
+  pinMode(STATUS_LED,OUTPUT);
   WiFi.config(ESP_IP_ADDRESS, default_gateway, subnet_mask);//from secrets.h
   String device_name = DEVICE_NAME;
   device_name.replace("_","-");//hostname dont allow underscores or spaces
   WiFi.hostname(device_name.c_str());// Set Hostname.
-  // Set the device as a Station and Soft Access Point simultaneously
-  WiFi.mode(WIFI_AP_STA); // This has to be WIFI_AP_STA and not WIFI_STA, I dont know why but if set to WIFI_STA then it can only receive broadcast messages
-  // and stops receiving MAC specific messages.
+
+
+  // For Station Mode
+  //wifi_set_macaddr(STATION_IF, &newMACAddress[0]);
+
   // Set device as a Wi-Fi Station
   WiFi.begin(ssid, password);
   DPRINTLN("Setting as a Wi-Fi Station..");
@@ -369,7 +400,8 @@ void setup() {
   });
   ArduinoOTA.begin();
   reconnectMQTT(); //connect to MQTT before publishing the startup message
-  publishHealthMessage(true); //publish the startup message
+  if(publishHealthMessage(true)) //publish the startup message
+    initilised = true;
 }
 
 
@@ -378,15 +410,13 @@ void setup() {
  */
 void loop() {
   //check for MQTT connection
-
   if (!client.connected()) 
   {
-    // Attempt to reconnect
-    reconnectMQTT();
+    reconnectMQTT(); // Attempt to reconnect
   } else {
-    // Client connected
-    client.loop();
+    client.loop(); // Client connected
   }
+  MQTT_wd.update(client.connected()); //feed the watchdog by calling update
 
   ArduinoOTA.handle();
   
@@ -410,11 +440,20 @@ void loop() {
       }//else the same message will be retried the next time
     }
   }
+
   // try to publish health message irrespective of the state of espnow messages
   if(millis() - last_time > HEALTH_INTERVAL)
   {
-    //collect health params and publish the health message
+    // It might be possible when the ESP comes up MQTT is down, in that case an init message will not get published in setup()
+    // The statement below will check and publish the same , only once
+    if(!initilised)
+    {
+      if(publishHealthMessage(true))
+        initilised = true;
+    }
+    //Now publish the health message
     publishHealthMessage();
-    last_time = millis();
+    last_time = millis(); // This is reset irrespective of a successful publish else the main loop will continously try to publish this message
   }
+  statusLED.loop();
 }
