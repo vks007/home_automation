@@ -52,7 +52,10 @@ float mapf(float x, float in_min, float in_max, float out_min, float out_max)
 }
 
 
-// callback when data is sent
+/*
+ * Callback when data is sent , It sets the bResultReady flag to true on successful delivery of message
+ * The flag is set to false in the main loop where data is sent and then the code waits to see if it gets set to true, if not it retires to send
+ */
 esp_now_send_cb_t OnDataSent([](uint8_t *mac_addr, uint8_t status) {
   espsend.deliverySuccess = status;
   DPRINT("OnDataSent:Last Packet delivery status:\t");
@@ -61,7 +64,7 @@ esp_now_send_cb_t OnDataSent([](uint8_t *mac_addr, uint8_t status) {
 });
 
 /*
- * Callback called when a message is received , nothign to do here for now , just log message
+ * Callback called when a message is received , nothing to do here for now , just log message
  */
 void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
   espnow_message msg;

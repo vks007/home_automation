@@ -256,6 +256,7 @@ bool publishHealthMessage(bool init=false)
     init_msg_json["tot_memKB"] = (float)ESP.getFlashChipSize() / 1024.0;
     init_msg_json["mac"] = WiFi.macAddress();
     init_msg_json["macAP"] = WiFi.softAPmacAddress();
+    init_msg_json["wifiChannel"] = WiFi.channel();
     strcpy(publish_topic,MQTT_TOPIC);
     strcat(publish_topic,"/init");
     str_msg="";
