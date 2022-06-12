@@ -13,7 +13,7 @@
  */
 //Specify the sensor this is being compiled for in platform.ini, see Config.h for list of all devices this can be compiled for
 #define DEBUG (1) //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
-#define TESTING (0) // defines if we're in testing mode in which the sensor keeps sending readings in a loop for MAX_MESSAGE_RETRIES
+#define TESTING (0) // defines if we're in testing mode in which the sensor keeps sending readings in a loop for MAX_COUNT
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
@@ -25,26 +25,17 @@
 #include <OneWire.h>
 #include <averager.h>
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
+#include "espnowController.h" //defines all utility functions for sending espnow messages from a controller
+#include <ESP_EEPROM.h> // to store espnow wifi channel no in eeprom for retrival later
 
-#define WAIT_TIMEOUT 50 // time in millis to wait for acknowledgement of the message sent
-#define MAX_MESSAGE_RETRIES 5 // No of times a message is retries to be sent before dropping the message
-#define SLEEP_TIME 120e6 // sleep time interval in microseconds
+#define MAX_COUNT 5 // No of times a message is retries to be sent before dropping the message
+#define SLEEP_TIME 120 // sleep time interval in seconds
 #define ONE_WIRE_BUS 4 // gets readings from the data pin of DS18B20 sensor , there should be a pull up from this pin to Vcc
 #define RESISTOR_CONST 5.156 // constant obtained by Resistor divider network. Vbat----R1---R2---GND . Const = (R1+R2)/R1
         // I have used R1 = 1M , R2=270K. calc factor comes to 4.7 but actual measurements gave me a more precise value of 5.156
 
-#define MY_ROLE         ESP_NOW_ROLE_COMBO              // set the role of this device: CONTROLLER, SLAVE, COMBO
-#define RECEIVER_ROLE   ESP_NOW_ROLE_COMBO              // set the role of the receiver
-
-typedef struct esp_now_peer_info {// this is defined in esp_now.h for ESP32 but not in espnow.h for ESP8266
-  u8 peer_addr[6];
-  uint8_t channel;
-  uint8_t encrypt;
-}esp_now_peer_info_t;
-
 espnow_message myData;
-volatile bool bSuccess = false;
-volatile bool bResultReady = false;
+esputil espsend(ESP_NOW_ROLE_CONTROLLER,WIFI_SSID);
 char device_id[13];
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);            // Pass the oneWire reference to Dallas Temperature.
@@ -61,31 +52,16 @@ float mapf(float x, float in_min, float in_max, float out_min, float out_max)
 }
 
 
-/*
- * Gets the WiFi channel of the SSID of your router, It has to be on the same channel as this one as the receiver will listen to ESPNow messages on the same 
- * While theritically it should be possible for WiFi and ESPNow to work on different channels but it seems due to some bug (or behavior) this isnt possible with espressif
- */
-int32_t getWiFiChannel(const char *ssid) {
-  if (int32_t n = WiFi.scanNetworks()) {
-      for (uint8_t i=0; i<n; i++) {
-          if (!strcmp(ssid, WiFi.SSID(i).c_str())) {
-              return WiFi.channel(i);
-          }
-      }
-  }
-  return 0;
-}
-
 // callback when data is sent
 esp_now_send_cb_t OnDataSent([](uint8_t *mac_addr, uint8_t status) {
-  bSuccess = (status == 0 ? true : false);
-  DPRINT("\r\nLast Packet Send Status:\t");
-  DPRINTLN(status == 0 ? "Delivery Success" : "Delivery Fail");
-  bResultReady = true;
+  espsend.deliverySuccess = status;
+  DPRINT("OnDataSent:Last Packet delivery status:\t");
+  DPRINTLN(status == 0 ? "Success" : "Fail");
+  espsend.bResultReady = true;
 });
 
 /*
- * Callback called on sending a message.
+ * Callback called when a message is received , nothign to do here for now , just log message
  */
 void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
   espnow_message msg;
@@ -99,48 +75,17 @@ void setup() {
   DPRINTLN();
   pinMode(SENSOR_POWER_PIN,OUTPUT);
   sensors.begin();//start sensors
-  // Set device as a Wi-Fi Station and set channel
-  WiFi.mode(WIFI_STA);
 
-  int32_t channel = getWiFiChannel(WIFI_SSID);
-// Sometimes after loading the new firmware the channel doesnt change to the required one, I have to reset the board to do the same.
-// It rather reports the channel as 0 , I will have to look into this and solve, I think I saw some discussion around this where ESP remembers the last channel used 
-// I think I have to fo a WiFi.disconnect to circumvent this, will try this out.
+  //Initialize EEPROM , this is used to store the channel no for espnow in the memory, only stored when it changes which is rare
+  EEPROM.begin(16);// 16 is the size of the EEPROM to be allocated, 16 is the minimum
 
-  WiFi.disconnect(); // trying to see if the issue of sometimes it not setting the right channel gets solved by this.
-  // To change the channel you have to first call wifi_promiscuous_enable(true) , change channel and then call wifi_promiscuous_enable(false)
-//  WiFi.printDiag(Serial); // Uncomment to verify channel number before
-  wifi_promiscuous_enable(true);
-  wifi_set_channel(channel);
-  wifi_promiscuous_enable(false);
-  delay(10);
-  short ch = wifi_get_channel();
-  DPRINT("channel:");DPRINTLN(ch);
-  //strange behavior : If I define ch as byte and make the comparison below , the ESP resets due to WDT and then hangs
-  if(ch == 0)
-  {
-    DPRINTLN("WiFi Channel not set properly, restarting");
-    ESP.restart();
-  }
-//  WiFi.printDiag(Serial); // Uncomment to verify channel change after
+  DPRINTLN("initializing espnow");
+  espsend.initilize();
 
-  //Init ESP-NOW
-  if (esp_now_init() != 0) {
-    DPRINTLN("Error initializing ESP-NOW");
-    return;
-  }
-
-  esp_now_set_self_role(MY_ROLE);
-  // Once ESPNow is successfully Init, we will register for Send CB to
-  // get the status of Trasnmitted packet
+  // register callbacks for events when data is sent and data is received
   esp_now_register_send_cb(OnDataSent);
   esp_now_register_recv_cb(OnDataRecv);
-
-  //Add peer , There is no method in ESP8266 to add a peer by passing esp_now_peer_info_t object unlike ESP32
-  if (esp_now_add_peer((u8*)gatewayAddress, RECEIVER_ROLE, channel, NULL, 0) != 0){
-    DPRINTLN("Failed to add peer");
-    return;
-  }
+  espsend.refreshPeer(gatewayAddress);
 
   String wifiMacString = WiFi.macAddress();
   wifiMacString.replace(":","");
@@ -154,11 +99,14 @@ void setup() {
 
 
 void loop() {
-  for(short i = 0;i<MAX_MESSAGE_RETRIES;i++)
+  for(short i = 0;i<MAX_COUNT;i++)
   {
-    // supply power to the sensor 
     sensors.requestTemperatures(); // Send the command to get temperatures
-    myData.floatvalue1 = sensors.getTempCByIndex(0); // get temperature reading for the first sensor
+    // If the sensor is disconnected it gives junk negative values, to eliminate them I am setting the value to MIN_TEMP in that case
+    if(sensors.getTempCByIndex(0) < MIN_TEMP)
+      myData.floatvalue1 = MIN_TEMP;
+    else
+      myData.floatvalue1 = sensors.getTempCByIndex(0); // get temperature reading for the first sensor
     DPRINT("Temp:");DPRINTLN(myData.floatvalue1);
     
     //measure battery voltage on ADC pin , average it over 10 readings
@@ -168,21 +116,11 @@ void loop() {
       avg_batt_volt.append(analogRead(A0));
       delay(5);
     }
-    myData.intvalue1 = avg_batt_volt.getAverage();
+    myData.intvalue1 = avg_batt_volt.getAverage(); // assigning this just for debug purposes
 
     float batt_level = (avg_batt_volt.getAverage()/1023.0)* RESISTOR_CONST;
     myData.floatvalue2 = batt_level;
 
-    //convert batt level into a %tage , 3.5 -> 0% , 4.2 -> 100% (min and max voltages of a Li-Ion battery
-/*
-    if(batt_level <=3.5)
-      myData.floatvalue2 = 0;
-    else if(batt_level >= 4.2)
-      myData.floatvalue2 = 100;
-    else
-      myData.floatvalue2 = mapf(batt_level,3.5,4.2,0,100);
-*/
-      
     //Set other values to send
     // If devicename is not given then generate one from MAC address stripping off the colon
     if(DEVICE_NAME == "")
@@ -203,30 +141,22 @@ void loop() {
     strcpy(myData.chardata2,"");
     myData.message_id = millis();//there is no use of message_id so using it to send the uptime
       
-    int result = esp_now_send(gatewayAddress, (uint8_t *) &myData, sizeof(myData));
-    long waitTimeStart = millis();
+    //int result = esp_now_send(gatewayAddress, (uint8_t *) &myData, sizeof(myData));
+    int result = espsend.sendMessage(&myData,gatewayAddress);
     if (result == 0) {
-      DPRINTLN("Sent with success");
-    }
-    else {
-      DPRINTLN("Error sending the data");
-    }
-    while(!bResultReady && ((millis() - waitTimeStart) < WAIT_TIMEOUT))
+      DPRINTLN("Delivered with success");}
+    else {DPRINTFLN("Error sending/receipting the message, error code:%d",result);}
+    
+    #if(TESTING) // If we are testing then it sends a message MAX_COUNT times
     {
-      delay(1);
-    }
-    bResultReady = false; // prepare for next iteration
-    #if(!TESTING)
-    {
-      if(bSuccess)
-        break;
-    }
-    #else
       delay(5000);
+    }
+    #else 
+        break;
     #endif
   }
   DFLUSH();
   digitalWrite(SENSOR_POWER_PIN,LOW);//remove power to the sensor module else it consumes power (~ 20uA more)
-  ESP.deepSleep(SLEEP_TIME);//ESP consumes ~20uA during deep sleep which is great!
+  ESP.deepSleep(SLEEP_TIME*10e6);//ESP consumes ~20uA during deep sleep which is great!
 
 }
