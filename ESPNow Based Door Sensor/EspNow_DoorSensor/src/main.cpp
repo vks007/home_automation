@@ -32,7 +32,7 @@
 #include "espnowMessage.h" // for struct of espnow message
 #include "Config.h"
 #include "myutils.h" //include utility functions
-#include "espnowUtil.h" //defines all utility functions for espnow functionality
+#include "espnowController.h" //defines all utility functions for espnow functionality
 #include <ESP_EEPROM.h> // to store espnow wifi channel no in eeprom for retrival later
 
 #define VERSION "2.3"
@@ -49,17 +49,17 @@ ADC_MODE(ADC_VCC);//connects the internal ADC to VCC pin and enables measuring V
 const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 strings adjacent to each other become pasted together as one long string
 
 espnow_message myData;
+esputil espsend(ESP_NOW_ROLE_CONTROLLER,WIFI_SSID);
 
 /*
  * Callback when data is sent , It sets the bResultReady flag to true on successful delivery of message
  * The flag is set to false in the main loop where data is sent and then the code waits to see if it gets set to true, if not it retires to send
  */
 esp_now_send_cb_t OnDataSent([](uint8_t *mac_addr, uint8_t status) {
-  bResult = (status == 0? true:false);
-//  bResult = status;
-  DPRINT("Last Packet Send Status:");
-  DPRINTLN(status == 0 ? "Delivery Success" : "Delivery Fail");
-  bResultReady = true;
+  espsend.deliverySuccess = status;
+  DPRINT("OnDataSent:Last Packet delivery status:\t");
+  DPRINTLN(status == 0 ? "Success" : "Fail");
+  espsend.bResultReady = true;
 });
 
 /*
@@ -109,13 +109,12 @@ void setup() {
   DPRINTLN(digitalRead(SIGNAL_PIN));
 
   DPRINTLN("initializing espnow");
-  Initilize_espnow();
+  espsend.initilize();
 
   // register callbacks for events when data is sent and data is received
   esp_now_register_send_cb(OnDataSent);
   esp_now_register_recv_cb(OnDataRecv);
-
-  refreshPeer();
+  espsend.refreshPeer(gatewayAddress);
 
   // char device_id[13];
   // String wifiMacString = WiFi.macAddress();
@@ -141,7 +140,10 @@ void setup() {
   // and that for a ESP is always constant. Hence I am trying to get a combination of the following 4 things, micros creates an almost true random number
   myData.message_id = myData.intvalue1 + myData.intvalue2 + WiFi.RSSI() + micros();
   myData.intvalue3 = millis();// for debug purpuses, send the millis till this instant in intvalue3
-  send_espnow_message(&myData);
+  int result = espsend.sendMessage(&myData,gatewayAddress);
+  if (result == 0) {
+    DPRINTLN("Delivered with success");}
+  else {DPRINTFLN("Error sending/receipting the message, error code:%d",result);}
 
   // Now you can kill power
   DPRINTLN("powering down");
