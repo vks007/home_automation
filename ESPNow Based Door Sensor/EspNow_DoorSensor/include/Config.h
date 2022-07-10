@@ -56,10 +56,10 @@
   #define DEVICE_NAME             "test_door"
   #define HOLD_PIN 5  // defines hold pin (will hold power to the ESP).
   #define SIGNAL_PIN 4 //indicates the message type
-  #define MY_ROLE         ESP_NOW_ROLE_COMBO              // set the role of this device: CONTROLLER, SLAVE, COMBO
-  #define RECEIVER_ROLE   ESP_NOW_ROLE_COMBO              // set the role of the receiver
-  uint8_t gatewayAddress[] = GATEWAY_GF_MAC; //comes from secrets.h
-  constexpr char WIFI_SSID[] = gf_ssid;// from secrets.h
+  #define MY_ROLE         ESP_NOW_ROLE_CONTROLLER              // set the role of this device: CONTROLLER, SLAVE, COMBO
+  #define RECEIVER_ROLE   ESP_NOW_ROLE_SLAVE              // set the role of the receiver
+  uint8_t gatewayAddress[] = GATEWAY_GF_STA_MAC; //comes from secrets.h
+  constexpr char WIFI_SSID[] = primary_ssid;// from secrets.h
   #define BOUNCE_DELAY 1 // bounce delay in seconds, this is used for a bumby door which bounces a few times before settling on either open or closed
   #define HOLDING_LOGIC LOGIC_NORMAL
 
