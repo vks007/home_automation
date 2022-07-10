@@ -1,0 +1,18 @@
+{
+	"folders": [
+		{
+			"path": "..\\ESPNowGateway_ESP8266"
+		},
+		{
+			"name": "ESPNow_Temperature_Node",
+			"path": "..\\ESPNow_Temperature_Node"
+		},
+		{
+			"path": "..\\ESPNow Based Door Sensor\\EspNow_DoorSensor"
+		},
+		{
+			"path": "..\\ESPNow Based Door Sensor\\EspNow_DoorSensorESPOnly"
+		}
+	],
+	"settings": {}
+}

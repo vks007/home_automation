@@ -23,7 +23,9 @@ Utility file which encapsulates the functionality of initializing espnow on a co
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
 #include <ESP_EEPROM.h> // to store the WiFi channel number in EEPROM for faster adding of peer next time on wards
 
+#define KEY_LEN  16 // lenght of PMK & LMK key (fixed at 16 for ESP)
 #define WAIT_TIMEOUT 25 // time in millis to wait for acknowledgement of the message sent
+#define CONNECTION_RETRY_INTERVAL 30 // time is secs to wait before refreshing the connection in case of failure
 #define MAX_SSID_LEN 50
 //Define the esp_now_peer_info if we're working with esp8266, for ESP32 its already defined
 #ifdef ESP8266
@@ -59,6 +61,7 @@ class esputil
   uint8_t getWiFiChannel(const char *ssid) {
     if (int32_t n = WiFi.scanNetworks()) {
         for (uint8_t i=0; i<n; i++) {
+            DPRINTLN(WiFi.SSID(i).c_str());
             if (!strcmp(ssid, WiFi.SSID(i).c_str())) {
                 return WiFi.channel(i);
             }
@@ -67,41 +70,26 @@ class esputil
     return 0;
   }
 
-  public:
-  esputil(esp_now_role role,const char ssid[])
-  {
-    _role = role;
-    memcpy(_ssid,ssid,sizeof(ssid)>MAX_SSID_LEN?MAX_SSID_LEN:sizeof(ssid));//max size of ssid string is 50
-  }
-  volatile uint8_t deliverySuccess = 9; //0 means success , non zero are error codes
-  volatile bool bResultReady = false;
-  
-  void setChannelRefreshFlag(bool flag)
-  {
-    channelRefreshed = flag;
-  }
-  
   /*
-  * calls all statements to initialize the esp device for espnow messages
-  * It sets STA mode, reads channel from RTC, if invalid, re-scans channel, sets ESP role
-  * Params: forceChannelRefresh : true forces the channel to be scanned again , false: tries to read the channel from RTC memory, if it fails then scans afresh
+  * Finds the right channel as per the router's WiFi channel and stores it in the EEPROM memory if different from the one already on. 
+  * While theritically it should be possible for WiFi and ESPNow to work on different channels but it seems due to some bug (or behavior) this isnt possible with espressif
   */
-  void initilize(bool forceChannelRefresh = false, bool restartOnError= false)
+  void setSSIDChannel(bool forceChannelRefresh = false, bool restartOnError= false)
   {
-    // Set device as a Wi-Fi Station and set channel
-    WiFi.mode(WIFI_STA);
-
+    DPRINTFLN("Current channel:%d",wifi_get_channel());
     if(_channel == 0) // we're starting up , get the channel from the EEPROM
     {
       if(EEPROM.get(0, _channel))
       {DPRINTFLN("wifi channel read from memory = %d",_channel);}
       else
-      {DPRINTLN("Failed to read wifi channel from memory");}
+      {DPRINTFLN("Failed to read wifi channel from memory:%d",_channel);}
     }
     
-    if((_channel <= 0 || _channel > 14) || forceChannelRefresh)//we have an invalid channel, it can only range between 1-14 , scan for a valid channel
+    if((_channel <= 0 || _channel > 14) || forceChannelRefresh )//we have an invalid channel, it can only range between 1-14 , scan for a valid channel
     {
+        DPRINTFLN("Scanning channel for SSID = %s",_ssid);
         uint8_t new_channel = getWiFiChannel(_ssid);
+        DPRINTFLN("new wifi channel scanned = %d",new_channel);
         if(new_channel != 0)
         {
           if(new_channel != _channel)//only write the new channel if its different from the one we already have
@@ -116,28 +104,57 @@ class esputil
         else
           DPRINTLN("Failed to get a valid channel for " && _ssid);
     }
-
-    //WiFi.disconnect(); // trying to see if the issue of sometimes it not setting the right channel gets solved by this.
-    // To change the channel you have to first call wifi_promiscuous_enable(true) , change channel and then call wifi_promiscuous_enable(false)
+    // sometimes we get a channel 0 after scanning, that's because at times the SSID we're scanning for isnt available. I have seen this happen many times.
+    //WiFi.disconnect();
     //  WiFi.printDiag(Serial);
-    wifi_promiscuous_enable(true);
-    wifi_set_channel(_channel);
-    wifi_promiscuous_enable(false);
-    delay(10);
+    // only change channel if its different from the earlier one
+    // To change the channel you have to first call wifi_promiscuous_enable(true) , change channel and then call wifi_promiscuous_enable(false)
+    if((wifi_get_channel() != _channel) && _channel !=0)// no use changing channel if we got 0, it can happen if you dont find the SSID
+    {
+      wifi_promiscuous_enable(true);
+      wifi_set_channel(_channel);
+      wifi_promiscuous_enable(false);
+      delay(10);// not sure why did I keep this delay, may remove it later
+    }
     uint8_t ch = wifi_get_channel();
-    DPRINTFLN("channel:%d",ch);
+    DPRINTFLN("New channel:%d",ch);
     //strange behavior : If I define ch as byte and make the comparison below , the ESP resets due to WDT and then hangs
     if(ch == 0 && restartOnError)
     {
       DPRINTLN("Could not set WiFi Channel properly, restarting");
       ESP.restart();
     }
-  //  WiFi.printDiag(Serial);
+    //  WiFi.printDiag(Serial);
+  }
 
+  public:
+  esputil(esp_now_role role,const char ssid[])
+  {
+    _role = role;
+    //memcpy(_ssid,ssid,sizeof(ssid)>MAX_SSID_LEN?MAX_SSID_LEN:sizeof(ssid));//max size of ssid string is 50
+    memcpy(_ssid,"EAGLE_EXT",sizeof("EAGLE_EXT"));//max size of ssid string is 50
+  }
+  volatile uint8_t deliverySuccess = 9; //0 means success , non zero are error codes
+  volatile bool bResultReady = false;
+  
+  void setChannelRefreshFlag(bool flag)
+  {
+    channelRefreshed = flag;
+  }
+
+  /*
+  * calls all statements to initialize the esp device for espnow messages
+  * It sets STA mode, reads channel from RTC, if invalid, re-scans channel, sets ESP role
+  * Params: forceChannelRefresh : true forces the channel to be scanned again , false: tries to read the channel from RTC memory, if it fails then scans afresh
+  */
+  void initilize(bool forceChannelRefresh = false, bool restartOnError= false)
+  {
+    setSSIDChannel(forceChannelRefresh);
+    
+    // Set device as a Wi-Fi Station and set channel
+    WiFi.mode(WIFI_STA);
     // if we're forcing an init again, deinit first
-    if(forceChannelRefresh)
-    {esp_now_deinit();}
-
+    esp_now_deinit();
     //Init ESP-NOW
     if (esp_now_init() != 0) {
       DPRINTLN("Error initializing ESP-NOW");
@@ -149,15 +166,21 @@ class esputil
   /*
   * Deletes and re-adds the peer , Required to be called when the WiFi channel number changes
   */
-  bool refreshPeer(uint8_t peerAddress[])
+  bool refreshPeer(uint8_t peerAddress[],const uint8_t key[])
   {
       esp_now_del_peer(gatewayAddress);//delete peer if it is present
       //Add peer , Note: There is no method in ESP8266 to add a peer by passing esp_now_peer_info_t object unlike ESP32
-      if (esp_now_add_peer((u8*)peerAddress, ESP_NOW_ROLE_SLAVE, _channel, NULL, 0) != 0){
+      if (esp_now_add_peer((u8*)peerAddress, ESP_NOW_ROLE_SLAVE, _channel,(uint8_t*) key, key == nullptr ? 0 : KEY_LEN) != 0){
+//      if (esp_now_add_peer((u8*)peerAddress, ESP_NOW_ROLE_SLAVE, _channel,(uint8_t*) NULL, 0) != 0){
           DPRINTFLN("Failed to add peer on channel:%u",_channel);
           return false;
       }
-      DPRINTFLN("Added peer: %X:%X:%X:%X:%X:%X on channel:%u",peerAddress[0],peerAddress[1],peerAddress[2],peerAddress[3],peerAddress[4],peerAddress[5],_channel);
+      uint8_t *peerCheck = esp_now_fetch_peer(true);
+      
+      if (peerCheck != nullptr)
+        {DPRINTFLN("Added peer: %X:%X:%X:%X:%X:%X on channel:%u",peerCheck[0],peerCheck[1],peerCheck[2],peerCheck[3],peerCheck[4],peerCheck[5],_channel);}
+      else
+        {DPRINTLN("Failed to set the peer");}
       return true;
   }
 
@@ -174,7 +197,7 @@ class esputil
     if(retries<1)
       retries = 1;
     // try to send the message MAX_MESSAGE_RETRIES times if it fails
-    for(short i = 0;i<retries;i++)
+    for(short i = 0;i<=retries;i++)
     {
       //DPRINTLN(millis());
       DPRINTLN(myData->intvalue3);
@@ -191,17 +214,19 @@ class esputil
       }
       //DPRINTFLN("wait:%u",(millis() - waitTimeStart));
       if(deliverySuccess == 0)
+      {
         break;
+      }
       else
       {
           bResultReady = false; // message sending failed , prepare for next iteration
-          //See if we are on the right channel, it might have changed since last time we wrote the same in RTC memory
-          // Scan for the WiFi channel again and store the new value in the RTC memory, Do it only once
+          // //See if we are on the right channel, it might have changed since last time we wrote the same in RTC memory
+          // // Scan for the WiFi channel again and store the new value in the RTC memory, Do it only once
           if(!channelRefreshed)
           {
-              DPRINTLN("Re-initialize ESP to refresh wifi channel");
-              initilize(true);
-              channelRefreshed = true;// this will enable refreshing of channel only once in a cycle, unless the flag is reset by calling code
+              DPRINTLN("Refresh wifi channel...");
+              setSSIDChannel();
+              channelRefreshed = true;// this will enable refreshing of channel only once in a cycle, unless the flag is again reset by calling code
           }
       }
     }

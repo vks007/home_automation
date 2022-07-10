@@ -22,13 +22,14 @@
  */
 
 // IMPORTANT : Compile it for the device you want, details of which are in Config.h
-
+// Define macros for turning features ON and OFF , usage : #define SECURITY IN_USE
 #define IN_USE == 1
 #define NOT_IN_USE == 0
 #define USING(feature) 1 feature //macro to check a feature , ref : https://stackoverflow.com/questions/18348625/c-macro-to-enable-and-disable-code-features
 
 //Turn features ON and OFF below
-#define SECURITY NOT_IN_USE
+#define SECURITY NOT_IN_USE // encryption of messages
+#define MOTION_SENSOR IN_USE // if a motion sensor is connected to the ESP as an optional sensor
 #define DEBUG (1) //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 /* For now currently turning OFF security as I am not able to make it work. It works even if the keys aren't the same on controller and slave
  * Also I have to find a way to create a list of multiple controllers as with security you haev to register each controller separately
@@ -44,17 +45,20 @@
 #include <ArduinoQueue.h>
 #include <ArduinoOTA.h>
 #include "espnowMessage.h" // for struct of espnow message
-#include "myutils.h"
 #include <PubSubClient.h>
 #include <Pinger.h>
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
+#include "myutils.h"
 #include "espwatchdog.h"
 #include <ezLED.h> // I am using a local copy of this library instead from the std library repo as that has an error in cpp file.
 // The author has defined all functions which take a default argumnent again in the cpp file whereas the default argument should only be 
 // specified in the decleration and not in the implementation of the function.
 
+#include "pir_sensor.h"
+
 #define VERSION "1.2"
 const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 strings adjacent to each other become pasted together as one long string
+#define KEY_LEN  16 // lenght of PMK & LMK key (fixed at 16 for ESP)
 #define MQTT_RETRY_INTERVAL 5000 //MQTT server connection retry interval in milliseconds
 #define QUEUE_LENGTH 50
 #define MAX_MESSAGE_LEN 251 // defnies max message length, as the max espnow allows is 250, cant exceed it
@@ -94,11 +98,11 @@ uint8_t controller_mac[][6] = CONTROLLERS; //from secrets.h
 // };
 
 #if USING(SECURITY)
-uint8_t kok[16]= PMK_KEY_STR;//comes from secrets.h
-uint8_t key[16] = LMK_KEY_STR;// comes from secrets.h
+uint8_t kok[KEY_LEN]= PMK_KEY_STR;//comes from secrets.h
+uint8_t key[KEY_LEN] = LMK_KEY_STR;// comes from secrets.h
 #else
-uint8_t kok[16]= {};//comes from secrets.h
-uint8_t key[16] = {};// comes from secrets.h
+uint8_t kok[KEY_LEN]= {NULL};//comes from secrets.h
+uint8_t key[KEY_LEN] = {NULL};// comes from secrets.h
 #endif
 
 ArduinoQueue<espnow_message> structQueue(QUEUE_LENGTH);
@@ -106,6 +110,16 @@ WiFiClient espClient;
 PubSubClient client(espClient);
 static espnow_message emptyMessage;
 espnow_message currentMessage = emptyMessage;
+
+#if USING(MOTION_SENSOR)
+pir_sensor motion_sensor(PIR_PIN,MOTION_ON_DURATION);
+#endif
+
+typedef enum
+{
+  MOTION = 0,
+  UNDEFINED = 1
+}msgType;
 
 /*
  * connects to MQTT server , publishes LWT message as "online" every time it connects
@@ -211,7 +225,21 @@ bool publishToMQTT(espnow_message msg) {
   String str_msg="";
   serializeJson(msg_json,str_msg);
   return publishToMQTT(str_msg.c_str(),final_publish_topic,false);
-  //Serial.printf("published message with len:%u\n",measureJson(msg_json));
+  //DPRINTF("published message with len:%u\n",measureJson(msg_json));
+}
+
+/*
+ * Creates a message string for motion ON message and publishes it to a MQTT queue
+ * Returns true if message was published successfully else false
+ */
+bool publishMotionMsgToMQTT(const char topic_name[],const char state[4]) {
+  char publish_topic[65] = "";
+  // create a path for this specific device which is of the form MQTT_BASE_TOPIC/<master_id> , master_id is usually the mac address stripped off the colon eg. MQTT_BASE_TOPIC/2CF43220842D
+  strcpy(publish_topic,MQTT_TOPIC);
+  strcat(publish_topic,"/");
+  strcat(publish_topic,topic_name);
+  strcat(publish_topic,"/state");
+  return publishToMQTT(state,publish_topic,false);
 }
 
 /*
@@ -231,7 +259,7 @@ void OnDataSent(uint8_t *receiver_mac, uint8_t transmissionStatus) {
 void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
   espnow_message msg;
   memcpy(&msg, incomingData, sizeof(msg));
-  //DPRINTF("OnDataRecv:%lu,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
+  DPRINTF("OnDataRecv:%lu,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
   
     if(!structQueue.isFull())
       structQueue.enqueue(msg);
@@ -299,8 +327,16 @@ bool publishHealthMessage(bool init=false)
  * Initializes the ESP with espnow and WiFi client , OTA etc
  */
 void setup() {
-  // Initialize Serial Monitor
-  Serial.begin(115200);
+  // Initialize Serial Monitor , if we're usng pin 3 on ESP8266 for PIR then initialize Serial as Tx only , disable Rx
+  #if USING(MOTION_SENSOR)
+  if(PIR_PIN == 3)
+    {DBEGIN(115200, SERIAL_8N1, SERIAL_TX_ONLY);}
+  else
+    {DBEGIN(115200);}
+  #else
+    {DBEGIN(115200);}
+  #endif
+
   // Set the device as a Station and Soft Access Point simultaneously
   WiFi.mode(WIFI_AP_STA); // This has to be WIFI_AP_STA and not WIFI_STA, I dont know why but if set to WIFI_STA then it can only receive broadcast messages
   // and stops receiving MAC specific messages.
@@ -351,17 +387,18 @@ void setup() {
   byte channel = wifi_get_channel();
   #if USING(SECURITY)
   // Setting the PMK key
-  esp_now_set_kok(kok, 16);
+  esp_now_set_kok(kok, KEY_LEN);
   #endif
-  for(byte i = 0;i< sizeof(controller_mac)/6;i++)
-  {
-    #if USING(SECURITY)
-    esp_now_add_peer(controller_mac[i], ESP_NOW_ROLE_CONTROLLER, channel, key, 16);
-    esp_now_set_peer_key(controller_mac[i], key, 16);
-    #else
-    esp_now_add_peer(controller_mac[i], ESP_NOW_ROLE_CONTROLLER, channel, NULL, 16);
-    #endif
-  }
+//   for(byte i = 0;i< sizeof(controller_mac)/6;i++)
+//   {
+// //    #if USING(SECURITY)
+//     // esp_now_add_peer(controller_mac[i], ESP_NOW_ROLE_CONTROLLER, channel, key, key == nullptr ? 0 : KEY_LEN);
+//     DPRINTFLN("Added peer:%X:%X:%X:%X:%X:%X",controller_mac[i][0],controller_mac[i][1],controller_mac[i][2],controller_mac[i][3],controller_mac[i][4],controller_mac[i][5] );
+//     //esp_now_set_peer_key(controller_mac[i], key, KEY_LEN);
+// //    #else
+//     esp_now_add_peer(controller_mac[i], ESP_NOW_ROLE_CONTROLLER, channel, NULL, 0);
+// //    #endif
+//   }
 
   esp_now_register_send_cb(OnDataSent);
   esp_now_register_recv_cb(OnDataRecv);
@@ -403,6 +440,11 @@ void setup() {
   reconnectMQTT(); //connect to MQTT before publishing the startup message
   if(publishHealthMessage(true)) //publish the startup message
     initilised = true;
+  #if USING(MOTION_SENSOR)
+  if(!motion_sensor.begin(MOTION_SENSOR_NAME)) //initialize the motion sensor
+    DPRINTLN("Failed to initialize motion sensor");
+  #endif
+  
 }
 
 
@@ -418,6 +460,20 @@ void loop() {
     client.loop(); // Client connected
   }
   MQTT_wd.update(client.connected()); //feed the watchdog by calling update
+  
+  #if USING(MOTION_SENSOR)
+  short motion_state = motion_sensor.update();
+  if(motion_state == 1)
+  {
+    DPRINTLN("Motion detected as ON");
+    publishMotionMsgToMQTT(motion_sensor.getSensorName(),"on");
+  }
+  else if(motion_state == 2)
+  {
+    DPRINTLN("Motion detected as OFF");
+    publishMotionMsgToMQTT(motion_sensor.getSensorName(),"off");
+  }
+  #endif
 
   ArduinoOTA.handle();
   
