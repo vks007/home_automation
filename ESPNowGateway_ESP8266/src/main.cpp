@@ -27,9 +27,6 @@
 #define NOT_IN_USE == 0
 #define USING(feature) 1 feature //macro to check a feature , ref : https://stackoverflow.com/questions/18348625/c-macro-to-enable-and-disable-code-features
 
-//Turn features ON and OFF below
-#define SECURITY NOT_IN_USE // encryption of messages
-#define MOTION_SENSOR IN_USE // if a motion sensor is connected to the ESP as an optional sensor
 #define DEBUG (1) //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 /* For now currently turning OFF security as I am not able to make it work. It works even if the keys aren't the same on controller and slave
  * Also I have to find a way to create a list of multiple controllers as with security you haev to register each controller separately
@@ -78,8 +75,6 @@ long lastReconnectAttempt = 0; // Keeps track of the last time an attempt was ma
 bool initilised = false; // flag to track if initialisation of the ESP has finished. At present it only handles tracking of the "init" message published on startup
 String strIP_address = "";//stores the IP address of the ESP
 
-#define MY_ROLE         ESP_NOW_ROLE_COMBO              // set the role of this device: CONTROLLER, SLAVE, COMBO
-#define RECEIVER_ROLE   ESP_NOW_ROLE_COMBO              // set the role of the receiver
 extern "C"
 {
   #include <lwip/icmp.h> // needed for icmp packet definitions
@@ -323,6 +318,22 @@ bool publishHealthMessage(bool init=false)
   return false;//control will never come here
 }
 
+void printInitInfo()
+{
+  DPRINTLN("Starting up as a ESPNow Gateway");
+  #if USING(MOTION_SENSOR)
+    DPRINTLN("Motion sensor ON");
+  #else
+    DPRINTLN("Motion sensor OFF");
+  #endif
+  #if USING(SECURITY)
+    DPRINTLN("Security ON");
+  #else
+    DPRINTLN("Security OFF");
+  #endif
+
+}
+
 /*
  * Initializes the ESP with espnow and WiFi client , OTA etc
  */
@@ -337,6 +348,8 @@ void setup() {
     {DBEGIN(115200);}
   #endif
 
+  printInitInfo();
+
   // Set the device as a Station and Soft Access Point simultaneously
   WiFi.mode(WIFI_AP_STA); // This has to be WIFI_AP_STA and not WIFI_STA, I dont know why but if set to WIFI_STA then it can only receive broadcast messages
   // and stops receiving MAC specific messages.
@@ -344,11 +357,11 @@ void setup() {
   // A custom MAC address will allow all sensors to continue working with the new device and you will not be required to update code on all devices
   uint8_t customMACAddress[] = DEVICE_MAC; // defined in Config.h
   if(wifi_set_macaddr(SOFTAP_IF, &customMACAddress[0]))
-    {DPRINT("Successfully set a custom MAC address:");
+    { DPRINT("Successfully set a custom MAC address as:");
       DPRINTLN(WiFi.softAPmacAddress());
     }
     else
-    {DPRINT("Failed to set MAC address:");}
+    {DPRINT("Failed to set custom MAC address:");}
 
   pinMode(STATUS_LED,OUTPUT);
   WiFi.config(ESP_IP_ADDRESS, default_gateway, subnet_mask);//from secrets.h
@@ -383,22 +396,18 @@ void setup() {
     return;
   }
   
-  esp_now_set_self_role(ESP_NOW_ROLE_SLAVE);
-  byte channel = wifi_get_channel();
+  esp_now_set_self_role(MY_ROLE);
   #if USING(SECURITY)
   // Setting the PMK key
   esp_now_set_kok(kok, KEY_LEN);
-  #endif
-//   for(byte i = 0;i< sizeof(controller_mac)/6;i++)
-//   {
-// //    #if USING(SECURITY)
-//     // esp_now_add_peer(controller_mac[i], ESP_NOW_ROLE_CONTROLLER, channel, key, key == nullptr ? 0 : KEY_LEN);
-//     DPRINTFLN("Added peer:%X:%X:%X:%X:%X:%X",controller_mac[i][0],controller_mac[i][1],controller_mac[i][2],controller_mac[i][3],controller_mac[i][4],controller_mac[i][5] );
-//     //esp_now_set_peer_key(controller_mac[i], key, KEY_LEN);
-// //    #else
-//     esp_now_add_peer(controller_mac[i], ESP_NOW_ROLE_CONTROLLER, channel, NULL, 0);
-// //    #endif
-//   }
+  byte channel = wifi_get_channel();
+  // Add each controller who is expected to send a message to this gateway
+  for(byte i = 0;i< sizeof(controller_mac)/6;i++)
+  {
+    esp_now_add_peer(controller_mac[i], RECEIVER_ROLE, channel, key, KEY_LEN);
+    DPRINTFLN("Added controller :%02X:%02X:%02X:%02X:%02X:%02X",controller_mac[i][0],controller_mac[i][1],controller_mac[i][2],controller_mac[i][3],controller_mac[i][4],controller_mac[i][5] );
+  }
+   #endif
 
   esp_now_register_send_cb(OnDataSent);
   esp_now_register_recv_cb(OnDataRecv);
