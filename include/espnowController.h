@@ -164,21 +164,24 @@ class esputil
   }
 
   /*
-  * Deletes and re-adds the peer , Required to be called when the WiFi channel number changes
+  * Deletes and re-adds the peer. As peer is channel specific, call this when adding a peer for the first time or when channel number changes
+  * peerAddress - address of peer, an array of 8 uint8_t elements  eg: {0x05, 0xFF, 0xAF, 0x02, 0xFF, 0x02}
+  * key - security key - , an array of 16 uint8_t elements OR NULL  eg: {0x33, 0x43, 0x33, 0x14, 0x33, 0x44, 0x33, 0xF4, 0x00, 0x64, 0xA3, 0x24, 0x73, 0x43, 0x3C, 0x55}
+  * role - role of the peer - type esp_now_role : 1=ESP_NOW_ROLE_CONTROLLER, 2=ESP_NOW_ROLE_SLAVE, 3=ESP_NOW_ROLE_COMBO
   */
-  bool refreshPeer(uint8_t peerAddress[],const uint8_t key[])
+  bool refreshPeer(uint8_t peerAddress[],const uint8_t key[],esp_now_role role)
   {
       esp_now_del_peer(gatewayAddress);//delete peer if it is present
       //Add peer , Note: There is no method in ESP8266 to add a peer by passing esp_now_peer_info_t object unlike ESP32
-      if (esp_now_add_peer((u8*)peerAddress, ESP_NOW_ROLE_SLAVE, _channel,(uint8_t*) key, key == nullptr ? 0 : KEY_LEN) != 0){
-//      if (esp_now_add_peer((u8*)peerAddress, ESP_NOW_ROLE_SLAVE, _channel,(uint8_t*) NULL, 0) != 0){
+      if (esp_now_add_peer((u8*)peerAddress, role, _channel,(uint8_t*) key, key == NULL ? 0 : KEY_LEN) != 0){
           DPRINTFLN("Failed to add peer on channel:%u",_channel);
           return false;
       }
       uint8_t *peerCheck = esp_now_fetch_peer(true);
-      
       if (peerCheck != nullptr)
-        {DPRINTFLN("Added peer: %X:%X:%X:%X:%X:%X on channel:%u",peerCheck[0],peerCheck[1],peerCheck[2],peerCheck[3],peerCheck[4],peerCheck[5],_channel);}
+        {DPRINTF("Added peer: %02X:%02X:%02X:%02X:%02X:%02X on channel:%u",peerCheck[0],peerCheck[1],peerCheck[2],peerCheck[3],peerCheck[4],peerCheck[5],_channel);
+         DPRINTFLN(" with role:%u",role);
+        }
       else
         {DPRINTLN("Failed to set the peer");}
       return true;
