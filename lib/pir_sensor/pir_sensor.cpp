@@ -11,8 +11,11 @@
  */
  
 #include "pir_sensor.h"
+// //#include "Debugutils.h"
 
-#include "Debugutils.h"
+// TO DO : ************* I am not able to include the file Debugutils.h here to print serial debug statements , somehow the #define for SERIAL_DEBUG isnt defined
+// when the file Debugutils gets included here
+// It results in an compile error , will look into this later
 
 // begin() is to be called the first after creation of the object of pir_sensor. It initializes the pin & interrupt
 // Returns true if successful , returns false if the pin is not an interruptable pin
@@ -37,7 +40,7 @@ bool pir_sensor::begin(const char name[25])
     _sensor_ready = true;
     return true;
   }
-  DPRINTLN("Sensor initalized failed, signal pin is not interruptable");
+  //DPRINTLN("Sensor initalized failed, signal pin is not interruptable");
   return false;
 }
 
@@ -56,14 +59,14 @@ short pir_sensor::update()
 {
     if(!_sensor_ready)
     {
-      DPRINTLN("Sensor not initalized, call begin()");
+      //DPRINTLN("Sensor not initalized, call begin()");
       return 0;
     }
     if(_motion_triggered)
     {
         _motion_triggered = false;
         _motion_state = true;
-        DPRINTLN("motion turned ON");
+        //DPRINTLN("motion turned ON");
     }
     if(((millis() - _motion_timer) > _motion_duration) && _motion_on )
     {
@@ -72,13 +75,13 @@ short pir_sensor::update()
           _motion_on = false;
           _motion_triggered = false;
           _motion_state = false;
-          DPRINTLN("motion turned OFF");
+          //DPRINTLN("motion turned OFF");
           return 2;
         }
         else
         {
           _motion_timer = millis();
-          DPRINTLN("motion time renewed");
+          //DPRINTLN("motion time renewed");
         }
     }
     if(_motion_state)

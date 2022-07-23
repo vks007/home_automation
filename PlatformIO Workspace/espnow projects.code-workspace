@@ -12,6 +12,17 @@
 		},
 		{
 			"path": "..\\ESPNow Based Door Sensor\\EspNow_DoorSensorESPOnly"
+		},
+		{
+			"path": "..\\ESP touch Module"
+		},
+		{
+			"name": "espnow_sensor_32",
+			"path": "..\\..\\Sketches\\ESP32\\espnow_sensor_32"
+		},
+		{
+			"name": "ESP32_Test",
+			"path": "..\\..\\..\\PlatformIO\\Projects\\ESP32_Test"
 		}
 	],
 	"settings": {}

@@ -9,7 +9,10 @@
 #ifndef DEBUGUTILS_H
 #define DEBUGUTILS_H
 
-#if (DEBUG)
+#include "macros.h"
+//#define USING(feature) 1 feature
+
+#if USING(SERIAL_DEBUG)
   #define DPRINT(...) Serial.print(__VA_ARGS__)
   #define DPRINTLN(...) Serial.println(__VA_ARGS__)
   #define DBEGIN(...) Serial.begin(__VA_ARGS__)
@@ -17,6 +20,14 @@
   #define DPRINTFLN(...) Serial.printf(__VA_ARGS__);Serial.printf("\n")
   #define DFLUSH()		Serial.flush()
   #define DEND()		Serial.end()
+
+  #define PRINTFEATURE(name,feature) Serial.print(name);Serial.print("-ON");
+    // #if USING(feature)
+    //   Serial.print(name);Serial.print("-ON");
+    // #else
+    //   DPRINT(name);DPRINTLN("-OFF");
+    // #endif
+
 #else
   #define DPRINT(...)
   #define DPRINTLN(...)

@@ -12,46 +12,39 @@
  * - have multiple slaves to which a message can be tranmitted in the order of preference
  */
 //Specify the sensor this is being compiled for in platform.ini, see Config.h for list of all devices this can be compiled for
-// Define macros for turning features ON and OFF , usage : #define SECURITY IN_USE
-#define IN_USE == 1
-#define NOT_IN_USE == 0
-#define USING(feature) 1 feature //macro to check a feature , ref : https://stackoverflow.com/questions/18348625/c-macro-to-enable-and-disable-code-features
-
-//Turn features ON and OFF below
-#define DEBUG (1) //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 
 #include <Arduino.h>
+#include "macros.h"
+#include "secrets.h"
+#include "Config.h"
+#include "Debugutils.h"
 #include <ESP8266WiFi.h>
 #include <espnow.h>
-#include "secrets.h"
 #include "espnowMessage.h" // for struct of espnow message
-#include "Config.h"
+#include "myutils.h"
+#include "espnowController.h" //defines all utility functions for sending espnow messages from a controller
 #include <DallasTemperature.h>
 #include <OneWire.h>
 #include <averager.h>
-#include "myutils.h"
-#include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
-#include <ESP_EEPROM.h> // to store espnow wifi channel no in eeprom for retrival later
+#include <EEPROM.h>
 
-#if USING(SECURITY)
-uint8_t kok[16]= PMK_KEY_STR;//comes from secrets.h
-uint8_t key[16] = LMK_KEY_STR;// comes from secrets.h
-#endif
-
-#include "espnowController.h" //defines all utility functions for sending espnow messages from a controller
-
+// ************ HASH DEFINES *******************
 #define MAX_COUNT 500 // No of times a message is retries to be sent before dropping the message
 #define ONE_WIRE_BUS 4 // gets readings from the data pin of DS18B20 sensor , there should be a pull up from this pin to Vcc
 #define RESISTOR_CONST 5.156 // constant obtained by Resistor divider network. Vbat----R1---R2---GND . Const = (R1+R2)/R1
         // I have used R1 = 1M , R2=270K. calc factor comes to 4.7 but actual measurements gave me a more precise value of 5.156
+// ************ HASH DEFINES *******************
 
-
+// ************ GLOBAL OBJECTS/VARIABLES *******************
 espnow_message myData;
-esputil espsend(MY_ROLE,WIFI_SSID);
 char device_id[13];
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);            // Pass the oneWire reference to Dallas Temperature.
-//unsigned long sleep_duration = SLEEP_TIME * 1000000; // sleep duration in microseconds
+#if USING(SECURITY)
+uint8_t kok[16]= PMK_KEY_STR;//comes from secrets.h
+uint8_t key[16] = LMK_KEY_STR;// comes from secrets.h
+#endif
+// ************ GLOBAL OBJECTS/VARIABLES *******************
 
 // MAC Address , This should be the address of the softAP (and NOT WiFi MAC addr obtained by WiFi.macAddress()) if the Receiver uses both, WiFi & ESPNow
 // You can get the address via the command WiFi.softAPmacAddress() , usually it is one decimal no after WiFi MAC address
@@ -70,10 +63,10 @@ float mapf(float x, float in_min, float in_max, float out_min, float out_max)
  * The flag is set to false in the main loop where data is sent and then the code waits to see if it gets set to true, if not it retires to send
  */
 esp_now_send_cb_t OnDataSent([](uint8_t *mac_addr, uint8_t status) {
-  espsend.deliverySuccess = status;
+  deliverySuccess = status;
   DPRINT("OnDataSent:Last Packet delivery status:\t");
   DPRINTLN(status == 0 ? "Success" : "Fail");
-  espsend.bResultReady = true;
+  bResultReady = true;
 });
 
 /*
@@ -115,7 +108,7 @@ void setup() {
   EEPROM.begin(16);// 16 is the size of the EEPROM to be allocated, 16 is the minimum
 
   DPRINTLN("initializing espnow");
-  espsend.initilize();
+  initilizeESP(WIFI_SSID,MY_ROLE);
 
   #if(USING(SECURITY))
     esp_now_set_kok(kok, 16);
@@ -193,12 +186,12 @@ void loop() {
         break;
     #endif
   }
-  DPRINTFLN("Going to sleep for %u secs",SLEEP_DURATION);
+  DPRINTLN("Going to sleep");
   DFLUSH();
   digitalWrite(SENSOR_POWER_PIN,LOW);//remove power to the sensor module else it consumes power (~ 20uA more)
   //ESP.deepSleep(SLEEP_DURATION*10e6); // This statement does not work - not sure why, I am going crazy behind this.
   // The solution is to hardcode the value for time instead of taking from a #define
   // The problem I face is that with the above statement , ESP never wakes up after the first sleep, sometimes it doesnt even start up
-  ESP.deepSleep(180000000);// 180 secs
+  ESP.deepSleep(30*10e6);
 
 }

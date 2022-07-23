@@ -22,12 +22,6 @@
  */
 
 // IMPORTANT : Compile it for the device you want, details of which are in Config.h
-// Define macros for turning features ON and OFF , usage : #define SECURITY IN_USE
-#define IN_USE == 1
-#define NOT_IN_USE == 0
-#define USING(feature) 1 feature //macro to check a feature , ref : https://stackoverflow.com/questions/18348625/c-macro-to-enable-and-disable-code-features
-
-#define DEBUG (1) //BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 /* For now currently turning OFF security as I am not able to make it work. It works even if the keys aren't the same on controller and slave
  * Also I have to find a way to create a list of multiple controllers as with security you haev to register each controller separately
  * See ref code here: https://www.electrosoftcloud.com/en/security-on-your-esp32-with-esp-now/
@@ -35,55 +29,60 @@
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
-#include <espnow.h>
-#include "Config.h"
-#include "secrets.h"
-#include <ArduinoJson.h>
-#include <ArduinoQueue.h>
-#include <ArduinoOTA.h>
-#include "espnowMessage.h" // for struct of espnow message
-#include <PubSubClient.h>
-#include <Pinger.h>
+#include "Config.h" // defines all Config parameters. set your values before compiling
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
-#include "myutils.h"
-#include "espwatchdog.h"
-#include <ezLED.h> // I am using a local copy of this library instead from the std library repo as that has an error in cpp file.
+#include <espnow.h> // provides espnow capabilities for ESP8266
+#include "secrets.h" // provides all passwords and sensitive info
+#include <ArduinoJson.h> // provides json capabilities for messages published to MQTT
+#include <ArduinoQueue.h> // provide Queue management
+#include <ArduinoOTA.h> 
+#include "espnowMessage.h" // for struct of espnow message
+#include <PubSubClient.h> // library for MQTT
+#include <Pinger.h> // used for pinging a server (gatewya) in case of connection issues with MQTT
+#include "myutils.h" // provides some uitlity functions
+#include "espwatchdog.h" // provides capability ot reset the ESP in case it becomes unresponsive
+#include "pir_sensor.h" // provides capability to attach a PIR sensor to the ESP
+#include <ezLED.h> // provides non blocking blinking of a LED 
+// I am using a local copy of this library instead from the std library repo as that has an error in cpp file.
 // The author has defined all functions which take a default argumnent again in the cpp file whereas the default argument should only be 
 // specified in the decleration and not in the implementation of the function.
 
-#include "pir_sensor.h"
-
+// ************ HASH DEFINES *******************
 #define VERSION "1.2"
 const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 strings adjacent to each other become pasted together as one long string
 #define KEY_LEN  16 // lenght of PMK & LMK key (fixed at 16 for ESP)
 #define MQTT_RETRY_INTERVAL 5000 //MQTT server connection retry interval in milliseconds
-#define QUEUE_LENGTH 50
+#define QUEUE_LENGTH 50 // max no of messages the ESP should queue up before replacing them, limited by amount of free memory
 #define MAX_MESSAGE_LEN 251 // defnies max message length, as the max espnow allows is 250, cant exceed it
-#define ESP_OK 0 // This is defined for ESP32 but not for ESP8266 , so define it
 #define HEALTH_INTERVAL 30e3 // interval is millisecs to publish health message for the gateway
+#ifndef ESP_OK
+  #define ESP_OK 0 // This is defined for ESP32 but not for ESP8266 , so define it
+#endif
 // API_TIMEOUT is used to determine how long to wait for MQTT connection before restarting the ESP
 #ifndef API_TIMEOUT
   #define API_TIMEOUT 600 // define default timeout of monitoring for MQTT connection if not defined.
 #endif
-const char* ssid = WiFi_SSID;
-const char* password = WiFi_SSID_PSWD;
-long last_time = 0;
-bool retry_message = false;
+// ************ HASH DEFINES *******************
+
+// ************ GLOBAL OBJECTS/VARIABLES *******************
+const char* ssid = WiFi_SSID; // comes from config.h
+const char* password = WiFi_SSID_PSWD; // comes from config.h
+long last_time = 0; // last time when health check was published
+bool retry_message = false; // flag to indicate to retry sending of message in case of failure
 long last_message_count = 0;//stores the last count with which message rate was calculated
 long message_count = 0;//keeps track of total no of messages publshed since uptime
 long lastReconnectAttempt = 0; // Keeps track of the last time an attempt was made to connect to MQTT
 bool initilised = false; // flag to track if initialisation of the ESP has finished. At present it only handles tracking of the "init" message published on startup
-String strIP_address = "";//stores the IP address of the ESP
 
 extern "C"
 {
-  #include <lwip/icmp.h> // needed for icmp packet definitions
+  #include <lwip/icmp.h> // needed for icmp packet definitions , not sure what was this?
 }
-// Set global to avoid object removing after setup() routine
+
+// ************ GLOBAL OBJECTS/VARIABLES *******************
 Pinger pinger;
 ezLED  statusLED(STATUS_LED);
 watchDog MQTT_wd = watchDog(API_TIMEOUT); // monitors the MQTT connection, if it is disconnected beyond API_TIMEOUT , it restarts ESP
-
 //List of controllers(sensors) who will send messages to this receiver
 uint8_t controller_mac[][6] = CONTROLLERS; //from secrets.h
 //example entry : 
@@ -91,14 +90,9 @@ uint8_t controller_mac[][6] = CONTROLLERS; //from secrets.h
 //    {0x4C, 0xF2, 0x32, 0xF0, 0x74, 0x2D} ,
 //    {0xC, 0xDD, 0xC2, 0x33, 0x11, 0x98}
 // };
-
-#if USING(SECURITY)
+// Define security keys, these are random hex numbers
 uint8_t kok[KEY_LEN]= PMK_KEY_STR;//comes from secrets.h
 uint8_t key[KEY_LEN] = LMK_KEY_STR;// comes from secrets.h
-#else
-uint8_t kok[KEY_LEN]= {NULL};//comes from secrets.h
-uint8_t key[KEY_LEN] = {NULL};// comes from secrets.h
-#endif
 
 ArduinoQueue<espnow_message> structQueue(QUEUE_LENGTH);
 WiFiClient espClient;
@@ -109,12 +103,6 @@ espnow_message currentMessage = emptyMessage;
 #if USING(MOTION_SENSOR)
 pir_sensor motion_sensor(PIR_PIN,MOTION_ON_DURATION);
 #endif
-
-typedef enum
-{
-  MOTION = 0,
-  UNDEFINED = 1
-}msgType;
 
 /*
  * connects to MQTT server , publishes LWT message as "online" every time it connects
@@ -304,7 +292,7 @@ bool publishHealthMessage(bool init=false)
     if(publishToMQTT(str_msg.c_str(),publish_topic,false))
     {
       // publish the wifi message , I am publishing this everytime because it also has rssi
-      strIP_address = WiFi.localIP().toString();
+      String strIP_address = WiFi.localIP().toString();
       StaticJsonDocument<MAX_MESSAGE_LEN> wifi_msg_json;//It is recommended to create a new obj than reuse the earlier one by ArduinoJson
       wifi_msg_json["ip_address"] = strIP_address;
       wifi_msg_json["rssi"] = WiFi.RSSI();

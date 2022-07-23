@@ -21,20 +21,20 @@
 #pragma message STR(DEVICE)
 #endif
 */
-// This is how you assign a numeric value to a #define constant
-#define DEBUG (1) //can be either 0 or 1 , BEAWARE that this statement should be before #include "Debugutils.h" else the macros wont work as they are based on this #define
 
 #include <Arduino.h>
-#include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
+#include "macros.h"
+#include "secrets.h"
+#include "Config.h"
+#include "Debugutils.h"
 #include <ESP8266WiFi.h>
 #include <espnow.h>
-#include "secrets.h"
 #include "espnowMessage.h" // for struct of espnow message
-#include "Config.h"
 #include "myutils.h" //include utility functions
 #include "espnowController.h" //defines all utility functions for espnow functionality
-#include <ESP_EEPROM.h> // to store espnow wifi channel no in eeprom for retrival later
+#include <EEPROM.h> // to store espnow wifi channel no in eeprom for retrival later
 
+// ************ HASH DEFINES *******************
 #define VERSION "2.3"
 //Types of messages decoded via the signal pins
 #define SENSOR_NONE 0
@@ -42,24 +42,28 @@
 #define SENSOR_CLOSE 2
 #define MSG_ON 1 //payload for ON
 #define MSG_OFF 0//payload for OFF
+// ************ HASH DEFINES *******************
 
+// ************ GLOBAL OBJECTS/VARIABLES *******************
 short CURR_MSG = SENSOR_NONE;//This stores the message type deciphered from the states of the signal pins
-
 ADC_MODE(ADC_VCC);//connects the internal ADC to VCC pin and enables measuring Vcc
 const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 strings adjacent to each other become pasted together as one long string
-
 espnow_message myData;
-esputil espsend(ESP_NOW_ROLE_CONTROLLER,WIFI_SSID);
+#if USING(SECURITY)
+uint8_t kok[16]= PMK_KEY_STR;//comes from secrets.h
+uint8_t key[16] = LMK_KEY_STR;// comes from secrets.h
+#endif
+// ************ GLOBAL OBJECTS/VARIABLES *******************
 
 /*
  * Callback when data is sent , It sets the bResultReady flag to true on successful delivery of message
  * The flag is set to false in the main loop where data is sent and then the code waits to see if it gets set to true, if not it retires to send
  */
 esp_now_send_cb_t OnDataSent([](uint8_t *mac_addr, uint8_t status) {
-  espsend.deliverySuccess = status;
+  deliverySuccess = status;
   DPRINT("OnDataSent:Last Packet delivery status:\t");
   DPRINTLN(status == 0 ? "Success" : "Fail");
-  espsend.bResultReady = true;
+  bResultReady = true;
 });
 
 /*
@@ -109,22 +113,26 @@ void setup() {
   DPRINTLN(digitalRead(SIGNAL_PIN));
 
   DPRINTLN("initializing espnow");
-  espsend.initilize();
+  initilizeESP(WIFI_SSID,MY_ROLE);
 
   // register callbacks for events when data is sent and data is received
   esp_now_register_send_cb(OnDataSent);
   esp_now_register_recv_cb(OnDataRecv);
-  espsend.refreshPeer(gatewayAddress);
+  #if USING(SECURITY)
+    refreshPeer(gatewayAddress,key,RECEIVER_ROLE);
+  #else
+    refreshPeer(gatewayAddress,NULL,RECEIVER_ROLE);
+  #endif
 
-  // char device_id[13];
-  // String wifiMacString = WiFi.macAddress();
-  // wifiMacString.replace(":","");
-  // snprintf(device_id, 13, "%s", wifiMacString.c_str());
-  // strcpy(device_id,wifiMacString.c_str());
-  // DPRINTF("deviceid:%s\n",device_id);
-  
   // populate the values for the message
-  strcpy(myData.device_name,DEVICE_NAME);
+  // If devicename is not given then generate one from MAC address stripping off the colon
+  #ifndef DEVICE_NAME
+    String wifiMacString = WiFi.macAddress();
+    wifiMacString.replace(":","");
+    snprintf(myData.device_name, 16, "%s", wifiMacString.c_str());
+  #else
+    strcpy(myData.device_name,DEVICE_NAME);
+  #endif
   myData.intvalue1 = (CURR_MSG == SENSOR_OPEN? MSG_ON:MSG_OFF);
   DPRINTLN(myData.intvalue1);
   myData.intvalue2 = ESP.getVcc();
@@ -140,7 +148,7 @@ void setup() {
   // and that for a ESP is always constant. Hence I am trying to get a combination of the following 4 things, micros creates an almost true random number
   myData.message_id = myData.intvalue1 + myData.intvalue2 + WiFi.RSSI() + micros();
   myData.intvalue3 = millis();// for debug purpuses, send the millis till this instant in intvalue3
-  int result = espsend.sendMessage(&myData,gatewayAddress);
+  int result = sendESPnowMessage(&myData,gatewayAddress);
   if (result == 0) {
     DPRINTLN("Delivered with success");}
   else {DPRINTFLN("Error sending/receipting the message, error code:%d",result);}

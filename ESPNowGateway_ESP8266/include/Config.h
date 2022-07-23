@@ -1,16 +1,16 @@
 
-#ifndef GATEWAY_CONFIG_H
-#define GATEWAY_CONFIG_H
+#ifndef CONFIG_H
+#define CONFIG_H
 
+#include "macros.h"
 // Define all your devices here and then pass the DEVICE in the build flags in platform.ini file
 #define GATEWAY_GF 1
 #define GATEWAY_FF 2
 #define GATEWAY_TEST 3
 
-#define RX
-
 #if (DEVICE == GATEWAY_GF)
   //Turn features ON and OFF below
+  #define SERIAL_DEBUG            IN_USE // Debug statements in use or not
   #define SECURITY                NOT_IN_USE // encryption of messages
   #define MOTION_SENSOR           NOT_IN_USE // if a motion sensor is connected to the ESP as an optional sensor
   #define MY_ROLE                 ESP_NOW_ROLE_SLAVE              // set the role of this device: CONTROLLER, SLAVE, COMBO
@@ -24,9 +24,12 @@
   #define STATUS_LED              2
   #define DEVICE_MAC              GATEWAY_GF_STA_MAC // from secrets.h . You should preferably define a custom MAC instead of actual device MAC so that the MAC doesnt change with device
 #elif (DEVICE == GATEWAY_FF)
-  //Turn features ON and OFF below
+  //Turn features ON and OFF below start
+  #define SERIAL_DEBUG            IN_USE // Debug statements in use or not
   #define SECURITY                NOT_IN_USE // encryption of messages
   #define MOTION_SENSOR           IN_USE // if a motion sensor is connected to the ESP as an optional sensor
+  //Turn features ON and OFF below end
+
   #define MY_ROLE                 ESP_NOW_ROLE_SLAVE              // set the role of this device: CONTROLLER, SLAVE, COMBO
   #define RECEIVER_ROLE           ESP_NOW_ROLE_CONTROLLER              // set the role of the receiver
   #define DEVICE_NAME             "gateway_ff" //no spaces as this is used in topic names too
@@ -42,6 +45,7 @@
   #define MOTION_ON_DURATION      15 // time in seconds for which motion value should remain ON after detecting motion
 #elif (DEVICE == GATEWAY_TEST)
   //Turn features ON and OFF below
+  #define SERIAL_DEBUG            IN_USE // Debug statements in use or not
   #define SECURITY                NOT_IN_USE // encryption of messages
   #define MOTION_SENSOR           NOT_IN_USE // if a motion sensor is connected to the ESP as a sensor
   #define MY_ROLE                 ESP_NOW_ROLE_SLAVE              // set the role of this device: CONTROLLER, SLAVE, COMBO
