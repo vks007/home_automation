@@ -59,6 +59,11 @@ void setup() {
   //Init Serial Monitor
   DBEGIN(115200);
   DPRINTLN();
+  #if(USING(STATUS_LED))
+    pinMode(LED_GPIO,OUTPUT);
+    digitalWrite(LED_GPIO,LED_INVERTED?LOW:HIGH); // turn ON the LED
+  #endif
+  
   printInitInfo();
   EEPROM.begin(EEPROM_SIZE);
 
@@ -158,6 +163,15 @@ void loop() {
     // touchAttachInterrupt(TOUCHPIN9, callback9, THRESHOLD);
 
     esp_sleep_enable_touchpad_wakeup();
+    #if(USING(STATUS_LED))
+      // kill time to keep LED ON if its ON duration is > the time elasped till yet
+      if(LED_ON_DURATION != 0)
+      {
+        while(millis() < LED_ON_DURATION)
+          delay(1);
+      }
+      digitalWrite(LED_GPIO,LED_INVERTED?HIGH:LOW); // turn OFF the LED
+    #endif
     esp_deep_sleep_start();
     DPRINTFLN("In Deep sleep"); // This will never be printed
 
