@@ -29,7 +29,7 @@
 #include <EEPROM.h>
 
 // ************ HASH DEFINES *******************
-#define MAX_COUNT 500 // No of times a message is retries to be sent before dropping the message
+#define MAX_COUNT 5000 // No of times a message is retries to be sent before dropping the message
 #define ONE_WIRE_BUS 4 // gets readings from the data pin of DS18B20 sensor , there should be a pull up from this pin to Vcc
 #define RESISTOR_CONST 5.156 // constant obtained by Resistor divider network. Vbat----R1---R2---GND . Const = (R1+R2)/R1
         // I have used R1 = 1M , R2=270K. calc factor comes to 4.7 but actual measurements gave me a more precise value of 5.156
@@ -118,9 +118,9 @@ void setup() {
   esp_now_register_send_cb(OnDataSent);
   esp_now_register_recv_cb(OnDataRecv);
   #if(USING(SECURITY))
-    espsend.refreshPeer(gatewayAddress, key,RECEIVER_ROLE);
+    refreshPeer(gatewayAddress, key,RECEIVER_ROLE);
   #else
-    espsend.refreshPeer(gatewayAddress, NULL,RECEIVER_ROLE);
+    refreshPeer(gatewayAddress, NULL,RECEIVER_ROLE);
   #endif
 
   digitalWrite(SENSOR_POWER_PIN,HIGH);//set PIN high to given power to the sensor module
@@ -173,14 +173,14 @@ void loop() {
     myData.message_id = millis();//there is no use of message_id so using it to send the uptime
       
     //int result = esp_now_send(gatewayAddress, (uint8_t *) &myData, sizeof(myData));
-    int result = espsend.sendMessage(&myData,gatewayAddress);
+    int result = sendESPnowMessage(&myData,gatewayAddress,1,false);
     if (result == 0) {
       DPRINTLN("Delivered with success");}
     else {DPRINTFLN("Error sending/receipting the message, error code:%d",result);}
     
     #if(USING(TESTING)) // If we are testing then it sends a message MAX_COUNT times
     {
-      delay(10000);
+      delay(1);
     }
     #else 
         break;

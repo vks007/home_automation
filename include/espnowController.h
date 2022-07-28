@@ -58,7 +58,6 @@ volatile bool bResultReady = false;
 #define WAIT_TIMEOUT 25 // time in millis to wait for acknowledgement of the message sent
 #define CONNECTION_RETRY_INTERVAL 30 // time is secs to wait before refreshing the connection in case of failure
 #define MAX_SSID 50
-#define EEPROM_SIZE 4 // we only need 4 bytes to store int type channel number
 //Define the esp_now_peer_info if we're working with esp8266, for ESP32 its already defined
 #if defined(ESP8266)
 typedef struct esp_now_peer_info {// this is defined in esp_now.h for ESP32 but not in espnow.h for ESP8266
@@ -197,7 +196,7 @@ void setSSIDChannel(const char ssid[MAX_SSID], bool forceChannelRefresh = false,
 void initilizeESP(const char ssid[MAX_SSID],esp_now_role role, bool forceChannelRefresh = false, bool restartOnError= false)
 {
   // Set device as a Wi-Fi Station and set channel
-  WiFi.mode(WIFI_STA); // I shifted this to before the call to set the channel, see it it works
+  WiFi.mode(WIFI_STA); 
   setSSIDChannel(ssid,forceChannelRefresh,restartOnError);
   
   // if we're forcing an init again, deinit first
@@ -268,7 +267,7 @@ bool refreshPeer(esp_now_peer_info_t *peer)
 * Relies on the variable bResultReady & deliverySuccess which is set to true in the call back function of the OnDataSent to determine if the
    message sending was successful. You must set these in the OnDataSent function in your code
 */
-int sendESPnowMessage(espnow_message *myData,uint8_t peerAddress[], short retries=1)
+int sendESPnowMessage(espnow_message *myData,uint8_t peerAddress[], short retries=1,bool ack= true)
 {
   bResultReady = false;
   // retries should at least be 1 so that a message is tried twice in the loop, this is so that if channel number needs refreshed,
@@ -284,29 +283,34 @@ int sendESPnowMessage(espnow_message *myData,uint8_t peerAddress[], short retrie
     if (result == 0) DPRINTLN("Sent message, waiting for delivery...");
     else DPRINTLN("Error sending the message");
     
-    //get a confirmation of successful delivery , else try again. This flag is set in the callback OnDataSent from the calling code
-    while(!bResultReady && ((millis() - waitTimeStart) < WAIT_TIMEOUT))
+    if(ack)
     {
-      delay(1);
-    }
-    //DPRINTFLN("wait:%u",(millis() - waitTimeStart));
-    if(result == 0  && deliverySuccess == 0)
-    {
-      break;
+      //get a confirmation of successful delivery , else try again. This flag is set in the callback OnDataSent from the calling code
+      while(!bResultReady && ((millis() - waitTimeStart) < WAIT_TIMEOUT))
+      {
+        delay(1);
+      }
+      //DPRINTFLN("wait:%u",(millis() - waitTimeStart));
+      if(result == 0  && deliverySuccess == 0)
+      {
+        break;
+      }
+      else
+      {
+          bResultReady = false; // message sending failed , prepare for next iteration
+          // See if we are on the right channel, it might have changed since last time we wrote the same in EEPROM memory
+          // Do it only once in the cycle to send a message else it consumes battery every time the ESP tries to send in case
+          // there is permanent error in sending a message - eg. in case the Slave isnt available
+          if(!channelRefreshed)
+          {
+              DPRINTLN("Refresh wifi channel...");
+              setSSIDChannel(ssid,true);//force the channel refresh
+              channelRefreshed = true;// this will enable refreshing of channel only once in a cycle, unless the flag is again reset by the calling code
+          }
+      }
     }
     else
-    {
-        bResultReady = false; // message sending failed , prepare for next iteration
-        // See if we are on the right channel, it might have changed since last time we wrote the same in EEPROM memory
-        // Do it only once in the cycle to send a message else it consumes battery every time the ESP tries to send in case
-        // there is permanent error in sending a message - eg. in case the Slave isnt available
-        if(!channelRefreshed)
-        {
-            DPRINTLN("Refresh wifi channel...");
-            setSSIDChannel(WIFI_SSID,true);//force the channel refresh
-            channelRefreshed = true;// this will enable refreshing of channel only once in a cycle, unless the flag is again reset by the calling code
-        }
-    }
+      return result==0?true:false;
   }
   return deliverySuccess;
 }

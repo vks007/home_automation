@@ -23,6 +23,10 @@
 		{
 			"name": "ESP32_Test",
 			"path": "..\\..\\..\\PlatformIO\\Projects\\ESP32_Test"
+		},
+		{
+			"name": "Espnow_test_sensor",
+			"path": "..\\Espnow_test_sensor"
 		}
 	],
 	"settings": {}

@@ -21,7 +21,7 @@
   #define DFLUSH()		Serial.flush()
   #define DEND()		Serial.end()
 
-  #define PRINTFEATURE(name,feature) Serial.print(name);Serial.print("-ON");
+  //#define PRINTFEATURE(name,feature) Serial.print(name);Serial.print("-ON");
     // #if USING(feature)
     //   Serial.print(name);Serial.print("-ON");
     // #else
