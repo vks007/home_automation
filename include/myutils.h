@@ -124,5 +124,36 @@ static bool xstrcmp(const char *s1, const char *s2)
     return((*s1 - *s2) == 0);
 }
 
+/*
+This fucntion validates a MAC string 
+Function returns true if input string is a valid MAC else false
+Source/Credits: https://github.com/aardsoft/MACTool/blob/master/MACTool.cpp
+*/
+bool validate_MAC(const char *mac_string){
+  char mac_address[18];
+  char *t_ptr;
+
+  strcpy(mac_address, mac_string);
+  t_ptr = strtok(mac_address, ":");
+
+  int i = 0;
+  while (t_ptr != NULL){
+    int octet = strtol(t_ptr, NULL, 16);
+    if (octet < 0 || octet > 255)
+      return false;
+
+    t_ptr = strtok(NULL, ":");
+    i++;
+  }
+
+  // loop should've covered exactly 6 octets
+  if (i != 6)
+    return false;
+
+  return true;
+}
+
 
 #endif
+
+

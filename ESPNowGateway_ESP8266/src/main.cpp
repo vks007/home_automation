@@ -28,7 +28,15 @@
 */
 
 #include <Arduino.h>
-#include <ESP8266WiFi.h>
+#ifdef ESP32
+  #include <WiFi.h>
+  #include <AsyncTCP.h>
+#else
+  #include <ESP8266WiFi.h>
+  #include <ESPAsyncTCP.h>
+#endif
+#include <ESPAsyncWebServer.h>
+
 #include "Config.h" // defines all Config parameters. set your values before compiling
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
 #include <espnow.h> // provides espnow capabilities for ESP8266
@@ -73,13 +81,10 @@ long last_message_count = 0;//stores the last count with which message rate was 
 long message_count = 0;//keeps track of total no of messages publshed since uptime
 long lastReconnectAttempt = 0; // Keeps track of the last time an attempt was made to connect to MQTT
 bool initilised = false; // flag to track if initialisation of the ESP has finished. At present it only handles tracking of the "init" message published on startup
-
 extern "C"
-{
+{ 
   #include <lwip/icmp.h> // needed for icmp packet definitions , not sure what was this?
 }
-
-// ************ GLOBAL OBJECTS/VARIABLES *******************
 Pinger pinger;
 ezLED  statusLED(STATUS_LED);
 watchDog MQTT_wd = watchDog(API_TIMEOUT); // monitors the MQTT connection, if it is disconnected beyond API_TIMEOUT , it restarts ESP
@@ -99,10 +104,31 @@ WiFiClient espClient;
 PubSubClient client(espClient);
 static espnow_message emptyMessage;
 espnow_message currentMessage = emptyMessage;
+AsyncWebServer server(80);
+const char* input_param_mac = "input_mac";
 
 #if USING(MOTION_SENSOR)
 pir_sensor motion_sensor(PIR_PIN,MOTION_ON_DURATION);
 #endif
+// HTML web page to handle web server requests for ESPNOW OTA functionality
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE HTML><html><head>
+  <title>ESPNOW OTA</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html {font-family: Times New Roman; display: inline-block; text-align: center;}
+    h2 {font-size: 3.0rem; color: #FF0000;}
+  </style>
+  </head><body>
+  <form action="/espnowota">
+    Enter the MAC Address: <input type="text" name="input_mac">
+    <input type="submit" value="Send OTA Request">
+  </form><br>
+</body></html>)rawliteral";
+// ************ GLOBAL OBJECTS/VARIABLES *******************
+
+
+
 
 /*
  * connects to MQTT server , publishes LWT message as "online" every time it connects
@@ -322,6 +348,43 @@ void printInitInfo()
 
 }
 
+void notFound(AsyncWebServerRequest *request) {
+  request->send(404, "text/plain", "Not found");
+}
+
+void config_webserver()
+{
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/html", index_html);
+  });
+
+  server.on("/espnowota", HTTP_GET, [] (AsyncWebServerRequest *request) {
+    String mac_addr , response_msg;
+
+    if (request->hasParam(input_param_mac)) {
+      mac_addr = request->getParam(input_param_mac)->value();
+      DPRINTLN(mac_addr);
+      if(validate_MAC(mac_addr.c_str()))
+      {
+        response_msg = "ESPNOW OTA req sent to device: ";
+        DPRINTFLN("MAC %s is valid",mac_addr.c_str());
+      }
+      else
+      {
+        response_msg = "MAC address provided in invalid : ";
+        DPRINTFLN("MAC %s is invalid",mac_addr.c_str());
+      }
+    }
+    else 
+    {
+      mac_addr = "none";
+    }
+    request->send(200, "text/html", response_msg + mac_addr + " <br><a href=\"/\">Return to Home Page</a>");
+  });
+  server.onNotFound(notFound);
+  server.begin();  
+}
+
 /*
  * Initializes the ESP with espnow and WiFi client , OTA etc
  */
@@ -434,6 +497,8 @@ void setup() {
     }
   });
   ArduinoOTA.begin();
+
+  config_webserver();
   reconnectMQTT(); //connect to MQTT before publishing the startup message
   if(publishHealthMessage(true)) //publish the startup message
     initilised = true;
