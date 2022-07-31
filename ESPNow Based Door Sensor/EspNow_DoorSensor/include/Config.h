@@ -1,5 +1,6 @@
 #ifndef CONFIG_H
 #define CONFIG_H
+#include "macros.h"
 
 // you cant use strings so you have to use #defines for numeric values
 // Ref :https://stackoverflow.com/questions/2335888/how-to-compare-strings-in-c-conditional-preprocessor-directives
@@ -16,6 +17,7 @@
   #pragma message "Compiling the program for the device: MAIN_DOOR"
   #define SERIAL_DEBUG            IN_USE 
   #define SECURITY                NOT_IN_USE // using security or not to encrypt messages
+  #define EEPROM_STORE            IN_USE // If EEPROM is in use or not
   #define DEVICE_NAME             "main_door"
   #define HOLD_PIN 0  // defines hold pin (will hold power to the ESP).
   #define SIGNAL_PIN 3 //indicates the message type
@@ -23,13 +25,15 @@
   #define MY_ROLE         ESP_NOW_ROLE_COMBO              // set the role of this device: CONTROLLER, SLAVE, COMBO
   #define RECEIVER_ROLE   ESP_NOW_ROLE_COMBO              // set the role of the receiver
   uint8_t gatewayAddress[] = GATEWAY_FF_AP_MAC; //comes from secrets.h
-  constexpr char WIFI_SSID[] = primary_ssid;// from secrets.h
+  #define WiFi_SSID               primary_ssid //from secrets.h
+  #define WiFi_SSID_PSWD          primary_ssid_pswd // used only for OTA updates else this is not used , from secrets.h
   #define HOLDING_LOGIC LOGIC_NORMAL
 
 #elif (DEVICE == TERRACE_DOOR)
   #pragma message "Compiling the program for the device: TERRACE_DOOR"
   #define SERIAL_DEBUG            IN_USE 
   #define SECURITY                NOT_IN_USE // using security or not to encrypt messages
+  #define EEPROM_STORE            IN_USE // If EEPROM is in use or not
   #define DEVICE_NAME             "terrace_door" // This becomes the postfix of the final MQTT topic under which messages are published
   #define HOLD_PIN 0  // defines hold pin (will hold power to the ESP).
   #define SIGNAL_PIN 3 //indicates the message type
@@ -40,20 +44,23 @@
   // You can get the address via the command WiFi.softAPmacAddress() , usually it is one decimal no after WiFi MAC address
   // As a best practice you should define your own custom Soft MAC address so that you dont have to update all your sensors if you change the gateway device
   uint8_t gatewayAddress[] = GATEWAY_FF_AP_MAC; //comes from secrets.h
-  constexpr char WIFI_SSID[] = primary_ssid;// from secrets.h
+  #define WiFi_SSID               primary_ssid //from secrets.h
+  #define WiFi_SSID_PSWD          primary_ssid_pswd // used only for OTA updates else this is not used , from secrets.h
   #define HOLDING_LOGIC LOGIC_NORMAL
 
 #elif (DEVICE == BALCONY_DOOR)
   #pragma message "Compiling the program for the device: BALCONY_DOOR"
   #define SERIAL_DEBUG            IN_USE 
   #define SECURITY                NOT_IN_USE // using security or not to encrypt messages
+  #define EEPROM_STORE            IN_USE // If EEPROM is in use or not
   #define DEVICE_NAME             "balcony_door"
   #define HOLD_PIN 5  // defines hold pin (will hold power to the ESP).
   #define SIGNAL_PIN 4 //indicates the message type
   #define MY_ROLE         ESP_NOW_ROLE_COMBO              // set the role of this device: CONTROLLER, SLAVE, COMBO
   #define RECEIVER_ROLE   ESP_NOW_ROLE_COMBO              // set the role of the receiver
   uint8_t gatewayAddress[] = GATEWAY_FF_AP_MAC; //comes from secrets.h
-  constexpr char WIFI_SSID[] = primary_ssid;// from secrets.h
+  #define WiFi_SSID               primary_ssid //from secrets.h
+  #define WiFi_SSID_PSWD          primary_ssid_pswd // used only for OTA updates else this is not used , from secrets.h
   #define BOUNCE_DELAY 1 // bounce delay in seconds, this is used for a bumby door which bounces a few times before settling on either open or closed
   #define HOLDING_LOGIC LOGIC_INVERTED
 
@@ -61,13 +68,15 @@
   #pragma message "Compiling the program for the device: TEST_DOOR" 
   #define SERIAL_DEBUG            IN_USE 
   #define SECURITY                NOT_IN_USE // using security or not to encrypt messages
+  #define EEPROM_STORE            IN_USE // If EEPROM is in use or not
   #define DEVICE_NAME             "test_door"
   #define HOLD_PIN 5  // defines hold pin (will hold power to the ESP).
   #define SIGNAL_PIN 4 //indicates the message type
   #define MY_ROLE         ESP_NOW_ROLE_CONTROLLER              // set the role of this device: CONTROLLER, SLAVE, COMBO
   #define RECEIVER_ROLE   ESP_NOW_ROLE_SLAVE              // set the role of the receiver
   uint8_t gatewayAddress[] = GATEWAY_FF_AP_MAC; //comes from secrets.h
-  constexpr char WIFI_SSID[] = primary_ssid;// from secrets.h
+  #define WiFi_SSID               primary_ssid //from secrets.h
+  #define WiFi_SSID_PSWD          primary_ssid_pswd // used only for OTA updates else this is not used , from secrets.h
   #define BOUNCE_DELAY 1 // bounce delay in seconds, this is used for a bumby door which bounces a few times before settling on either open or closed
   #define HOLDING_LOGIC LOGIC_NORMAL
 

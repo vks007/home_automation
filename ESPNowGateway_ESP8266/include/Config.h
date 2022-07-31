@@ -8,27 +8,13 @@
 #define GATEWAY_FF 2
 #define GATEWAY_TEST 3
 
-#if (DEVICE == GATEWAY_GF)
-  //Turn features ON and OFF below
-  #define SERIAL_DEBUG            IN_USE // Debug statements in use or not
-  #define SECURITY                NOT_IN_USE // encryption of messages
-  #define MOTION_SENSOR           NOT_IN_USE // if a motion sensor is connected to the ESP as an optional sensor
-  #define MY_ROLE                 ESP_NOW_ROLE_SLAVE              // set the role of this device: CONTROLLER, SLAVE, COMBO
-  #define RECEIVER_ROLE           ESP_NOW_ROLE_CONTROLLER              // set the role of the receiver
-  #define DEVICE_NAME             "gateway_gf" //no spaces as this is used in topic names too
-  #define MQTT_TOPIC              "home/espnow/" DEVICE_NAME
-  #define MQTT_BASE_TOPIC         "home/espnow"
-  #define ESP_IP_ADDRESS          IP_gateway_gf // from secrets.h\static_ipaddress.h
-  #define WiFi_SSID               primary_ssid //from secrets.h
-  #define WiFi_SSID_PSWD          primary_ssid_pswd //from secrets.h
-  #define STATUS_LED              2
-  #define DEVICE_MAC              GATEWAY_GF_STA_MAC // from secrets.h . You should preferably define a custom MAC instead of actual device MAC so that the MAC doesnt change with device
-#elif (DEVICE == GATEWAY_FF)
+#if (DEVICE == GATEWAY_FF)
   //Turn features ON and OFF below start
   #define SERIAL_DEBUG            IN_USE // Debug statements in use or not
   #define SECURITY                NOT_IN_USE // encryption of messages
   #define MOTION_SENSOR           IN_USE // if a motion sensor is connected to the ESP as an optional sensor
-  //Turn features ON and OFF below end
+  #define EEPROM_STORE            NOT_IN_USE // If EEPROM is in use or not
+  //Turn features ON and OFF below ----------- end
 
   #define MY_ROLE                 ESP_NOW_ROLE_SLAVE              // set the role of this device: CONTROLLER, SLAVE, COMBO
   #define RECEIVER_ROLE           ESP_NOW_ROLE_CONTROLLER              // set the role of the receiver
@@ -48,6 +34,8 @@
   #define SERIAL_DEBUG            IN_USE // Debug statements in use or not
   #define SECURITY                NOT_IN_USE // encryption of messages
   #define MOTION_SENSOR           NOT_IN_USE // if a motion sensor is connected to the ESP as a sensor
+  #define EEPROM_STORE            NOT_IN_USE // If EEPROM is in use or not
+  //Turn features ON and OFF below ----------- end
   #define MY_ROLE                 ESP_NOW_ROLE_SLAVE              // set the role of this device: CONTROLLER, SLAVE, COMBO
   #define RECEIVER_ROLE           ESP_NOW_ROLE_CONTROLLER              // set the role of the receiver
   #define DEVICE_NAME             "gateway_test" //no spaces as this is used in topic names too

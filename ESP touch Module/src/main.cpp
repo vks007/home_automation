@@ -4,23 +4,24 @@
 //Specify the sensor this is being compiled for in platform.ini, see Config.h for list of all devices this can be compiled for
 
 // ************ HASH DEFINES *******************
-#define EEPROM_SIZE 16 // number of bytes to be allocated to EEPROM
 #define MSG_WAIT_TIMEOUT 30 // time in ms to wait for receiving any incoming messages to this ESP , typically 10-40 ms
 #define OTA_TIMEOUT 60 // time in seconds beyond which to come out of OTA mode
 #define VERSION "1.1.0"
 // ************ HASH DEFINES *******************
 
 #include <Arduino.h>
-#include "macros.h"
 #include "secrets.h"
 #include "Config.h"
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
 #include <esp_now.h>
 #include "espnowMessage.h" // for struct of espnow message
 #include "myutils.h"
-#include <EEPROM.h> // to store WiFi channel number to EEPROM
 #include <ArduinoOTA.h> 
 #include "version.h" // this defines a variable compile_version which gives the complete version of the program
+#if USING(EEPROM_STORE)
+#define EEPROM_SIZE 16 // number of bytes to be allocated to EEPROM
+#include <EEPROM.h> // to store WiFi channel number to EEPROM
+#endif
 
 // ************ GLOBAL OBJECTS/VARIABLES *******************
 const char* ssid = WiFi_SSID; // comes from config.h
@@ -60,7 +61,7 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   if(!ota_msg && !ota_mode) // dont receive any more messages if we are already in OTA mode
   {
     msgReceived = true;
-    if(msg.msg_type == ESP_NOW_OTA)
+    if(msg.msg_type == ESPNOW_OTA)
       ota_msg = true;
     DPRINTF("Processing msg:%lu,%u,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.msg_type,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
   }
@@ -198,6 +199,8 @@ void setup() {
     }
     DPRINTFLN("gpio_pin %u",gpio_pin);
   }
+  // set the mac address in the myData struct so that we wont need to populate it every time we send a message
+  strcpy(myData.sender_mac,WiFi.macAddress().c_str());
 }
 
 void callback0(){}
@@ -238,43 +241,38 @@ void go_to_sleep()
 /*
 * All sensor related work in the loop() is done in this function
 */
-void send_message()
+void send_message(msg_type_t msg_type, bool acknowledge = true)
 {
+  myData.msg_type = msg_type;
   if(gpio_pin >= 0 && gpio_pin <= 40)
   {
-    //DPRINTFLN("Touch detected on GPIO %u",gpio_pin);
     myData.intvalue1 = gpio_pin;
-
-    //Set other values to send
-    // If devicename is not given then generate one from MAC address stripping off the colon
-    #ifndef DEVICE_NAME
-      String wifiMacString = WiFi.macAddress();
-      wifiMacString.replace(":","");
-      snprintf(myData.device_name, 16, "%s", wifiMacString.c_str());
-    #else
-      strcpy(myData.device_name,DEVICE_NAME);
-    #endif
-    myData.intvalue2 = 0;
-    myData.intvalue3 = 0;
-    myData.intvalue4 = 0;
-    myData.floatvalue1 = 0;
-    myData.floatvalue2 = 0;
-    myData.floatvalue3 = 0;
-    myData.floatvalue4 = 0;
-    strcpy(myData.chardata1,"");
-    strcpy(myData.chardata2,"");
-    myData.message_id = millis();//there is no use of message_id so using it to send the uptime
-      
-    //int result = esp_now_send(gatewayAddress, (uint8_t *) &myData, sizeof(myData));
-    int result = sendESPnowMessage(&myData,gatewayAddress);
-    if (result == 0) {
-      DPRINTLN("Delivered with success");}
-    else {DPRINTFLN("Error sending/receipting the message, error code:%d",result);}
   }
-  else
-  {
-    DPRINTLN("nothing to do");
-  }
+  //Set other values to send
+  // If devicename is not given then generate one from MAC address stripping off the colon
+  #ifndef DEVICE_NAME
+    String wifiMacString = WiFi.macAddress();
+    wifiMacString.replace(":","");
+    snprintf(myData.device_name, 16, "%s", wifiMacString.c_str());
+  #else
+    strcpy(myData.device_name,DEVICE_NAME);
+  #endif
+  myData.intvalue2 = 0;
+  myData.intvalue3 = 0;
+  myData.intvalue4 = 0;
+  myData.floatvalue1 = 0;
+  myData.floatvalue2 = 0;
+  myData.floatvalue3 = 0;
+  myData.floatvalue4 = 0;
+  strcpy(myData.chardata1,"");
+  strcpy(myData.chardata2,"");
+  myData.message_id = millis();//there is no use of message_id so using it to send the uptime
+    
+  //int result = esp_now_send(gatewayAddress, (uint8_t *) &myData, sizeof(myData));
+  int result = sendESPnowMessage(&myData,gatewayAddress,acknowledge);
+  if (result == 0) {
+    DPRINTFLN("Msg Type: %d, delivered with success",myData.msg_type);}
+  else {DPRINTFLN("Error sending/receipting the message with msg type: %d, error code:%d",myData.msg_type,result);}
 }
 
 /*
@@ -306,7 +304,8 @@ void process_messages()
     // write true in EEPROM and restart the ESP
     EEPROM.write(sizeof(int),(byte)true);
     EEPROM.commit();
-    DPRINTFLN("OTA Flag read back from EEPROM %u",EEPROM.get(sizeof(int),ota_mode));
+    //DPRINTFLN("OTA Flag read back from EEPROM %u",EEPROM.get(sizeof(int),ota_mode));
+    send_message(ESPNOW_OTA,false);
     DPRINTFLN("Going to restart the ESP for OTA mode...");
     DFLUSH();
     ESP.restart();
@@ -348,7 +347,7 @@ void loop() {
   }
   else 
   {
-    send_message();
+    send_message(ESPNOW_SENSOR,true);
     scan_for_messages();
     if(!msgReceived) //no messages are received to process, turn off led and go to sleep
     {

@@ -57,6 +57,9 @@
 
 // ************ HASH DEFINES *******************
 #define VERSION "1.2"
+#define MAC_DELIMITER ":" // delimiter with which MAC address is separated
+#define OTA_TRIGGER_DURATION 10 // time in secs for which trigger the ESPNOW OTA messages
+#define OTA_MSG_INTERVAL  15 //interval in ms at which to repeat OTA messages
 const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 strings adjacent to each other become pasted together as one long string
 #define KEY_LEN  16 // lenght of PMK & LMK key (fixed at 16 for ESP)
 #define MQTT_RETRY_INTERVAL 5000 //MQTT server connection retry interval in milliseconds
@@ -80,7 +83,7 @@ bool retry_message = false; // flag to indicate to retry sending of message in c
 long last_message_count = 0;//stores the last count with which message rate was calculated
 long message_count = 0;//keeps track of total no of messages publshed since uptime
 long lastReconnectAttempt = 0; // Keeps track of the last time an attempt was made to connect to MQTT
-bool initilised = false; // flag to track if initialisation of the ESP has finished. At present it only handles tracking of the "init" message published on startup
+bool initilized = false; // flag to track if initialisation of the ESP has finished. At present it only handles tracking of the "init" message published on startup
 extern "C"
 { 
   #include <lwip/icmp.h> // needed for icmp packet definitions , not sure what was this?
@@ -90,11 +93,11 @@ ezLED  statusLED(STATUS_LED);
 watchDog MQTT_wd = watchDog(API_TIMEOUT); // monitors the MQTT connection, if it is disconnected beyond API_TIMEOUT , it restarts ESP
 //List of controllers(sensors) who will send messages to this receiver
 uint8_t controller_mac[][6] = CONTROLLERS; //from secrets.h
-//example entry : 
-// uint8_t controller_mac[2][6] = {  
-//    {0x4C, 0xF2, 0x32, 0xF0, 0x74, 0x2D} ,
-//    {0xC, 0xDD, 0xC2, 0x33, 0x11, 0x98}
-// };
+/* example entry : 
+uint8_t controller_mac[2][6] = {  
+   {0x4C, 0xF2, 0x32, 0xF0, 0x74, 0x2D} ,
+   {0xC, 0xDD, 0xC2, 0x33, 0x11, 0x98}
+}; */
 // Define security keys, these are random hex numbers
 uint8_t kok[KEY_LEN]= PMK_KEY_STR;//comes from secrets.h
 uint8_t key[KEY_LEN] = LMK_KEY_STR;// comes from secrets.h
@@ -125,9 +128,21 @@ const char index_html[] PROGMEM = R"rawliteral(
     <input type="submit" value="Send OTA Request">
   </form><br>
 </body></html>)rawliteral";
+
+#if defined(ESP32)
+esp_now_peer_info_t peerInfo; // This object must be a global object else the setting of peer will fail
+#endif
+#if USING(SECURITY)
+uint8_t kok[16]= PMK_KEY_STR;//comes from secrets.h
+uint8_t key[16] = LMK_KEY_STR;// comes from secrets.h
+#endif
+
+espnow_message myData;
+unsigned long start_time;
+unsigned long last_msg_sent_time;
+espnow_device esp_ota_device;
 // ************ GLOBAL OBJECTS/VARIABLES *******************
-
-
+#include "espnowController.h" //defines all utility functions for sending espnow messages from a controller
 
 
 /*
@@ -252,15 +267,15 @@ bool publishMotionMsgToMQTT(const char topic_name[],const char state[4]) {
 }
 
 /*
- * Callback called on receiving a message. It posts the incoming message in the queue
+ * Callback when data is sent , It sets the bResultReady flag to true on successful delivery of message
+ * The flag is set to false in the main loop where data is sent and then the code waits to see if it gets set to true, if not it retires to send
  */
-void OnDataSent(uint8_t *receiver_mac, uint8_t transmissionStatus) {
-  if(transmissionStatus == 0) {
-    DPRINTLN("Data sent successfully");
-  } else {
-    DPRINT("Error code: ");DPRINTLN(transmissionStatus);
-  }
-};
+esp_now_send_cb_t OnDataSent([](uint8_t *mac_addr, uint8_t status) {
+  deliverySuccess = status;
+  //DPRINT("OnDataSent:Last Packet delivery status:\t");
+  //DPRINTLN(status == 0 ? "Success" : "Fail");
+  bResultReady = true;
+});
 
 /*
  * Callback called on sending a message.
@@ -268,7 +283,7 @@ void OnDataSent(uint8_t *receiver_mac, uint8_t transmissionStatus) {
 void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
   espnow_message msg;
   memcpy(&msg, incomingData, sizeof(msg));
-  DPRINTF("OnDataRecv:%lu,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
+  DPRINTF("OnDataRecv:%lu,%d,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.msg_type,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
   
     if(!structQueue.isFull())
       structQueue.enqueue(msg);
@@ -352,32 +367,75 @@ void notFound(AsyncWebServerRequest *request) {
   request->send(404, "text/plain", "Not found");
 }
 
+/*
+ * repeatedly sends OTA message to an ESP for a certain duration 
+ * param: peerAddress: address of the peer as an uint8 array
+ * param: duration : duration in sec for which to keep sending this message
+ * param: stop_on_delivery : flag to indicate it it should stop sending messages once it gets the delivery confirmation
+ */
+void prepare_for_OTA(uint8_t peerAddress[])
+{
+//  espnow_message myData;
+  #if(USING(SECURITY))
+    refreshPeer(peerAddress, key,RECEIVER_ROLE);
+  #else
+    refreshPeer(peerAddress, NULL,RECEIVER_ROLE);
+  #endif
+  // If devicename is not given then generate one from MAC address stripping off the colon
+  #ifdef DEVICE_NAME
+    strcpy(myData.device_name,DEVICE_NAME);
+  #else
+    String wifiMacString = WiFi.macAddress();
+    wifiMacString.replace(":","");
+    snprintf(myData.device_name, 16, "%s", wifiMacString.c_str());
+  #endif
+  myData.msg_type = ESPNOW_OTA;
+  esp_ota_device.ota_mode = true; // set the ota flag which will trigger the OTA flow in loop()
+  esp_ota_device.ota_done = false; // reset the success flag
+  start_time = millis(); // start the timer
+  DPRINTLN("OTA prepared for device");
+}
+
 void config_webserver()
 {
+  // Handles root page
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send_P(200, "text/html", index_html);
   });
 
+  // Handles OTA request for an ESPNOW device
   server.on("/espnowota", HTTP_GET, [] (AsyncWebServerRequest *request) {
     String mac_addr , response_msg;
-
-    if (request->hasParam(input_param_mac)) {
-      mac_addr = request->getParam(input_param_mac)->value();
-      DPRINTLN(mac_addr);
-      if(validate_MAC(mac_addr.c_str()))
-      {
-        response_msg = "ESPNOW OTA req sent to device: ";
-        DPRINTFLN("MAC %s is valid",mac_addr.c_str());
+    // OTA can be triggered only for one device at a time, reject this request if one is already in progress
+    if(!esp_ota_device.ota_mode)
+    {
+      if (request->hasParam(input_param_mac)) {
+        mac_addr = request->getParam(input_param_mac)->value();
+        if(validate_MAC(mac_addr.c_str()))
+        {
+          DPRINTFLN("MAC %s is valid %02X:%02X:%02X:%02X:%02X:%02X",mac_addr.c_str(),esp_ota_device.mac[0],esp_ota_device.mac[1],esp_ota_device.mac[2],esp_ota_device.mac[3],esp_ota_device.mac[4],esp_ota_device.mac[5]);
+          mac_addr.replace(MAC_DELIMITER,"");
+          MAC_to_array(mac_addr.c_str(),esp_ota_device.mac,6);
+          prepare_for_OTA(esp_ota_device.mac);
+          response_msg = "ESPNOW OTA req sent to device: ";
+        }
+        else
+        {
+          response_msg = "MAC address provided in invalid : ";
+          DPRINTFLN("MAC %s is invalid",mac_addr.c_str());
+        }
       }
-      else
+      else 
       {
-        response_msg = "MAC address provided in invalid : ";
-        DPRINTFLN("MAC %s is invalid",mac_addr.c_str());
+        mac_addr = "none";
       }
     }
-    else 
+    else
     {
-      mac_addr = "none";
+      char buffer[18];
+      sprintf(buffer, "%02X:%02X:%02X:%02X:%02X:%02X",esp_ota_device.mac[0],esp_ota_device.mac[1],esp_ota_device.mac[2],esp_ota_device.mac[3],esp_ota_device.mac[4],esp_ota_device.mac[5] );
+      response_msg = "OTA already in progress for device: " + String(buffer);
+      DPRINTLN(response_msg);
     }
     request->send(200, "text/html", response_msg + mac_addr + " <br><a href=\"/\">Return to Home Page</a>");
   });
@@ -501,7 +559,7 @@ void setup() {
   config_webserver();
   reconnectMQTT(); //connect to MQTT before publishing the startup message
   if(publishHealthMessage(true)) //publish the startup message
-    initilised = true;
+    initilized = true;
   #if USING(MOTION_SENSOR)
   if(!motion_sensor.begin(MOTION_SENSOR_NAME)) //initialize the motion sensor
     DPRINTLN("Failed to initialize motion sensor");
@@ -548,15 +606,45 @@ void loop() {
     
     if(currentMessage != emptyMessage)
     {
-      if(publishToMQTT(currentMessage))
+      DPRINTFLN("Processing msg:%lu,%d",currentMessage.message_id,currentMessage.msg_type);
+      if(currentMessage.msg_type == ESPNOW_OTA)
       {
+        if(esp_ota_device.ota_mode)
+        {
+          char buffer[18];
+          sprintf(buffer, "%02X:%02X:%02X:%02X:%02X:%02X",esp_ota_device.mac[0],esp_ota_device.mac[1],esp_ota_device.mac[2],esp_ota_device.mac[3],esp_ota_device.mac[4],esp_ota_device.mac[5] );
+          if(xstrcmp(buffer,currentMessage.sender_mac))
+          {
+            esp_ota_device.ota_mode = false;
+            esp_ota_device.ota_done = true;
+            DPRINTLN("OTA successfuly completed for device:");
+          }
+          else
+            DPRINTFLN("MAC address of OTA device did not match. Target mac: %s , MAC in msg: %s",buffer,currentMessage.sender_mac);
+        }
+        else
+          DPRINTLN("OTA ack message received when not in OTA mode, ignoring...");
         message_count++;
         currentMessage = emptyMessage;
       }
+      else if(currentMessage.msg_type == ESPNOW_SENSOR)
+      {
+        if(publishToMQTT(currentMessage))
+        {
+          message_count++;
+          currentMessage = emptyMessage;
+        }
+        else
+        {
+          retry_message = true;
+        }//else the same message will be retried the next time
+      }
       else
       {
-        retry_message = true;
-      }//else the same message will be retried the next time
+        DPRINTLN("message received without msg_type set, ignoring...");
+        message_count++;
+        currentMessage = emptyMessage;
+      }
     }
   }
 
@@ -565,14 +653,41 @@ void loop() {
   {
     // It might be possible when the ESP comes up MQTT is down, in that case an init message will not get published in setup()
     // The statement below will check and publish the same , only once
-    if(!initilised)
+    if(!initilized)
     {
       if(publishHealthMessage(true))
-        initilised = true;
+        initilized = true;
     }
     //Now publish the health message
     publishHealthMessage();
     last_time = millis(); // This is reset irrespective of a successful publish else the main loop will continously try to publish this message
   }
   statusLED.loop();
+
+  if(esp_ota_device.ota_mode && !esp_ota_device.ota_done)
+  {
+    if(millis() < (start_time + OTA_TRIGGER_DURATION*1000))
+    {
+      if((millis() - last_msg_sent_time) > OTA_MSG_INTERVAL)
+      {
+        myData.message_id = millis();
+        bool result = sendESPnowMessage(&myData,esp_ota_device.mac,0,false);
+        last_msg_sent_time = millis();
+        if(result)
+        {
+          //DPRINTFLN("%lu: sent OTA message",myData.message_id);
+        }
+        else
+        {
+          DPRINTFLN("%lu: OTA message sending failed",myData.message_id);}
+      }
+    }
+    else
+    {
+      esp_ota_device.ota_mode = false;
+      esp_ota_device.ota_done = true;
+      DPRINTLN("OTA timed out without acknowlegdment for device:");
+    }
+  }
+
 }

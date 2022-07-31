@@ -23,7 +23,6 @@
 */
 
 #include <Arduino.h>
-#include "macros.h"
 #include "secrets.h"
 #include "Config.h"
 #include "Debugutils.h"
@@ -31,8 +30,10 @@
 #include <espnow.h>
 #include "espnowMessage.h" // for struct of espnow message
 #include "myutils.h" //include utility functions
-#include "espnowController.h" //defines all utility functions for espnow functionality
-#include <EEPROM.h> // to store espnow wifi channel no in eeprom for retrival later
+#if USING(EEPROM_STORE)
+#define EEPROM_SIZE 16 // number of bytes to be allocated to EEPROM
+#include <EEPROM.h> // to store WiFi channel number to EEPROM
+#endif
 
 // ************ HASH DEFINES *******************
 #define VERSION "2.3"
@@ -45,6 +46,8 @@
 // ************ HASH DEFINES *******************
 
 // ************ GLOBAL OBJECTS/VARIABLES *******************
+const char* ssid = WiFi_SSID; // comes from config.h
+const char* password = WiFi_SSID_PSWD; // comes from config.h
 short CURR_MSG = SENSOR_NONE;//This stores the message type deciphered from the states of the signal pins
 ADC_MODE(ADC_VCC);//connects the internal ADC to VCC pin and enables measuring Vcc
 const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 strings adjacent to each other become pasted together as one long string
@@ -54,6 +57,8 @@ uint8_t kok[16]= PMK_KEY_STR;//comes from secrets.h
 uint8_t key[16] = LMK_KEY_STR;// comes from secrets.h
 #endif
 // ************ GLOBAL OBJECTS/VARIABLES *******************
+// need to include this file after ssid variable as I am using ssid inside espcontroller, not a good design but will sort this out later
+#include "espnowController.h" //defines all utility functions for sending espnow messages from a controller
 
 /*
  * Callback when data is sent , It sets the bResultReady flag to true on successful delivery of message
@@ -113,7 +118,7 @@ void setup() {
   DPRINTLN(digitalRead(SIGNAL_PIN));
 
   DPRINTLN("initializing espnow");
-  initilizeESP(WIFI_SSID,MY_ROLE);
+  initilizeESP(ssid,MY_ROLE);
 
   // register callbacks for events when data is sent and data is received
   esp_now_register_send_cb(OnDataSent);

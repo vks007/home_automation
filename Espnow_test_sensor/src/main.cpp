@@ -123,7 +123,7 @@ void setup() {
 void loop() {
   for(short i = 0;i<MAX_COUNT;i++)
   {
-      myData.floatvalue1 = 0;
+    myData.floatvalue1 = 0;
     
     myData.intvalue1 = 2; // assigning this just for debug purposes
 
@@ -131,14 +131,13 @@ void loop() {
 
     //Set other values to send
     // If devicename is not given then generate one from MAC address stripping off the colon
-    if(DEVICE_NAME == "")
-    {
+    #ifdef DEVICE_NAME
+      strcpy(myData.device_name,DEVICE_NAME);
+    #else
       String wifiMacString = WiFi.macAddress();
       wifiMacString.replace(":","");
       snprintf(myData.device_name, 16, "%s", wifiMacString.c_str());
-    }
-    else
-      strcpy(myData.device_name,DEVICE_NAME);
+    #endif
     myData.intvalue2 = 0;
     myData.intvalue3 = 0;
     myData.intvalue4 = 0;

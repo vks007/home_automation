@@ -42,7 +42,9 @@ TO DO list:
 #endif
 #include "espnowMessage.h" // for struct of espnow message
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
+#if USING(EEPROM_STORE)
 #include <EEPROM.h> // to store WiFi channel number to EEPROM
+#endif
 
 // ************ GLOBAL OBJECTS/VARIABLES *******************
 uint8_t slave_channel = 0;//stores the channel of the slave by scanning the SSID the slave is on.
@@ -112,6 +114,7 @@ uint8_t getWiFiChannel()
   #endif
 }
 
+#if USING(EEPROM_STORE)
 /*
 * Sets the right channel for WiFi on the ESP. It finds the channel of the SSID passed to it and then changes the channel of the ESP to match the same
 * It also stores it in the EEPROM memory if different from the one already on for later use
@@ -210,6 +213,7 @@ void initilizeESP(const char ssid[MAX_SSID],esp_now_role role, bool forceChannel
   esp_now_set_self_role(role);
   #endif
 }
+#endif
 
 #if defined(ESP8266)
 /*
@@ -220,7 +224,7 @@ void initilizeESP(const char ssid[MAX_SSID],esp_now_role role, bool forceChannel
 */
 bool refreshPeer(uint8_t peerAddress[],const uint8_t key[],esp_now_role role)
 {
-    esp_now_del_peer(gatewayAddress);//delete peer if it is present
+    esp_now_del_peer(peerAddress);//delete peer if it is present
     //Add peer , Note: There is no method in ESP8266 to add a peer by passing esp_now_peer_info_t object unlike ESP32
     if (esp_now_add_peer((uint8_t*)peerAddress, role, slave_channel,(uint8_t*) key, key == NULL ? 0 : KEY_LEN) != 0){
         DPRINTFLN("Failed to add peer on channel:%u",slave_channel);
@@ -267,24 +271,24 @@ bool refreshPeer(esp_now_peer_info_t *peer)
 * Relies on the variable bResultReady & deliverySuccess which is set to true in the call back function of the OnDataSent to determine if the
    message sending was successful. You must set these in the OnDataSent function in your code
 */
-int sendESPnowMessage(espnow_message *myData,uint8_t peerAddress[], short retries=1,bool ack= true)
+bool sendESPnowMessage(espnow_message *myData,uint8_t peerAddress[], short retries=1,bool ack= true)
 {
   bResultReady = false;
-  // retries should at least be 1 so that a message is tried twice in the loop, this is so that if channel number needs refreshed,
+  // retries should at least be 1 when acknowledgement is required so that a message is tried twice in the loop, this is so that if channel number needs refreshed,
   // message sending is tried again.
-  if(retries<1)
+  if(retries<1 && ack)
     retries = 1;
   // try to send the message MAX_MESSAGE_RETRIES times if it fails
   for(short i = 0;i<=retries;i++)
   {
     int result = esp_now_send(peerAddress, (uint8_t *) myData, sizeof(*myData));
-    // If devicename is not given then generate one from MAC address stripping off the colon
-    long waitTimeStart = millis();
-    if (result == 0) DPRINTLN("Sent message, waiting for delivery...");
-    else DPRINTLN("Error sending the message");
+    //if (result == 0) DPRINTLN("Sent message, waiting for delivery...");
+    //else DPRINTLN("Error sending the message");
     
     if(ack)
     {
+      #if USING(EEPROM_STORE)
+      long waitTimeStart = millis();
       //get a confirmation of successful delivery , else try again. This flag is set in the callback OnDataSent from the calling code
       while(!bResultReady && ((millis() - waitTimeStart) < WAIT_TIMEOUT))
       {
@@ -308,6 +312,7 @@ int sendESPnowMessage(espnow_message *myData,uint8_t peerAddress[], short retrie
               channelRefreshed = true;// this will enable refreshing of channel only once in a cycle, unless the flag is again reset by the calling code
           }
       }
+      #endif
     }
     else
       return result==0?true:false;

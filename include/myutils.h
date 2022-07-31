@@ -114,9 +114,9 @@ bool readRtcMem(uint16_t *inVal, uint8_t slot = 0) {
 #endif
 
 /*
-This short article presents trivial but fast and memory efficient function to compare two strings. 
+This function is a fast and memory efficient way to compare two strings
 Function returns true on success (strings are the same), else false
-Source: https://blog.podkalicki.com/fast-string-comparison-for-microcontrollers/
+Source/Credit: https://blog.podkalicki.com/fast-string-comparison-for-microcontrollers/
 */
 static bool xstrcmp(const char *s1, const char *s2)
 {
@@ -153,7 +153,62 @@ bool validate_MAC(const char *mac_string){
   return true;
 }
 
+/*
+This function converts a hex char to number
+Returns: -1 if successful else the number equivalent
+Source/Credits: https://android.googlesource.com/platform/external/wpa_supplicant_8/+/ics-mr1/src/utils/common.c
+*/
+static int hex2num(char c)
+{
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F')
+		return c - 'A' + 10;
+	return -1;
+}
+
+/*
+This function converts a hex char to byte
+Returns: -1 if successful else the byte equivalent
+Source/Credits: https://android.googlesource.com/platform/external/wpa_supplicant_8/+/ics-mr1/src/utils/common.c
+*/
+int hex2byte(const char *hex)
+{
+	int a, b;
+	a = hex2num(*hex++);
+	if (a < 0)
+		return -1;
+	b = hex2num(*hex++);
+	if (b < 0)
+		return -1;
+	return (a << 4) | b;
+}
+
+
+/*
+This function converts a MAC string to an uint8_t array
+Returns: true is successful else false
+Source/Credits: https://android.googlesource.com/platform/external/wpa_supplicant_8/+/ics-mr1/src/utils/common.c
+*/
+bool MAC_to_array(const char *hex, uint8_t *buf, size_t len)
+{
+	size_t i;
+	int a;
+	const char *ipos = hex;
+	uint8_t *opos = buf;
+	for (i = 0; i < len; i++) {
+		a = hex2byte(ipos);
+		if (a < 0)
+			return false;
+		*opos++ = a;
+		ipos += 2;
+	}
+	return true;
+}
 
 #endif
+
 
 

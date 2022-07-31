@@ -34,7 +34,7 @@ class watchDog
         }
         else
         {
-            if( millis() - _last_timestamp > _timeout)
+            if( int(millis() - _last_timestamp) > _timeout)
             {
                 ESP.restart();
             }

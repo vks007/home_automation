@@ -1,5 +1,6 @@
 #ifndef CONFIG_H
 #define CONFIG_H
+#include "macros.h"
 
 #define TOUCH_SENSOR1 1
 // define more devices here as 2, 3, ... and provide config values for each device below
@@ -7,15 +8,15 @@
 #if (DEVICE == TOUCH_SENSOR1)
   #define SERIAL_DEBUG            IN_USE 
   #define SECURITY                NOT_IN_USE // using security or not to encrypt messages
+  #define EEPROM_STORE            IN_USE // If EEPROM is in use or not
   #define MY_ROLE                 ESP_NOW_ROLE_IDLE  // This is reduntant for ESP32 and only applicable for ESP8266
   #define STATUS_LED              IN_USE // If Status LED is used or not, affects battery
   #define OTA                     IN_USE // If Status LED is used or not, affects battery
   #define DEVICE_NAME             "touch_sensor1" //max 15 characters without spaces
-  uint8_t gatewayAddress[] =      GATEWAY_FF_AP_MAC; //comes from secrets.h
+  uint8_t gatewayAddress[] =      GATEWAY_TEST_AP_MAC; //comes from secrets.h
   #define WiFi_SSID               primary_ssid //from secrets.h
   #define WiFi_SSID_PSWD          primary_ssid_pswd // used only for OTA updates else this is not used , from secrets.h
   #define ESP_IP_ADDRESS          IP_espnow_sensor //from secrets.h\static_ipaddress.h
-//  constexpr char WIFI_SSID[] =    primary_ssid;// from secrets.h , SSID to which the Slave connects for WiFi, only SSID name needed here, not password
   #define THRESHOLD               40 // Threshold for touch pin sensitivity , greater the value, more the sensitivity
   #define TOUCHPIN0               T0 // GPIO4
   #define TOUCHPIN1               T1 // GPIO0

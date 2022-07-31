@@ -14,7 +14,6 @@
 //Specify the sensor this is being compiled for in platform.ini, see Config.h for list of all devices this can be compiled for
 
 #include <Arduino.h>
-#include "macros.h"
 #include "secrets.h"
 #include "Config.h"
 #include "Debugutils.h"
@@ -22,11 +21,13 @@
 #include <espnow.h>
 #include "espnowMessage.h" // for struct of espnow message
 #include "myutils.h"
-#include "espnowController.h" //defines all utility functions for sending espnow messages from a controller
 #include <DallasTemperature.h>
 #include <OneWire.h>
 #include <averager.h>
-#include <EEPROM.h>
+#if USING(EEPROM_STORE)
+#define EEPROM_SIZE 16 // number of bytes to be allocated to EEPROM
+#include <EEPROM.h> // to store WiFi channel number to EEPROM
+#endif
 
 // ************ HASH DEFINES *******************
 #define MAX_COUNT 5000 // No of times a message is retries to be sent before dropping the message
@@ -36,6 +37,8 @@
 // ************ HASH DEFINES *******************
 
 // ************ GLOBAL OBJECTS/VARIABLES *******************
+const char* ssid = WiFi_SSID; // comes from config.h
+const char* password = WiFi_SSID_PSWD; // comes from config.h
 espnow_message myData;
 char device_id[13];
 OneWire oneWire(ONE_WIRE_BUS);
@@ -45,6 +48,8 @@ uint8_t kok[16]= PMK_KEY_STR;//comes from secrets.h
 uint8_t key[16] = LMK_KEY_STR;// comes from secrets.h
 #endif
 // ************ GLOBAL OBJECTS/VARIABLES *******************
+// need to include this file after ssid variable as I am using ssid inside espcontroller, not a good design but will sort this out later
+#include "espnowController.h" //defines all utility functions for sending espnow messages from a controller
 
 // MAC Address , This should be the address of the softAP (and NOT WiFi MAC addr obtained by WiFi.macAddress()) if the Receiver uses both, WiFi & ESPNow
 // You can get the address via the command WiFi.softAPmacAddress() , usually it is one decimal no after WiFi MAC address
@@ -108,7 +113,7 @@ void setup() {
   EEPROM.begin(16);// 16 is the size of the EEPROM to be allocated, 16 is the minimum
 
   DPRINTLN("initializing espnow");
-  initilizeESP(WIFI_SSID,MY_ROLE);
+  initilizeESP(ssid,MY_ROLE);
 
   #if(USING(SECURITY))
     esp_now_set_kok(kok, 16);
