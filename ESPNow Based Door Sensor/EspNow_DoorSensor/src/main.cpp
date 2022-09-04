@@ -138,6 +138,8 @@ void setup() {
   #else
     strcpy(myData.device_name,DEVICE_NAME);
   #endif
+  myData.msg_type = ESPNOW_SENSOR;
+  strcpy(myData.sender_mac,WiFi.macAddress().c_str());
   myData.intvalue1 = (CURR_MSG == SENSOR_OPEN? MSG_ON:MSG_OFF);
   DPRINTLN(myData.intvalue1);
   myData.intvalue2 = ESP.getVcc();
