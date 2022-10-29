@@ -39,6 +39,7 @@
 // ************ GLOBAL OBJECTS/VARIABLES *******************
 const char* ssid = WiFi_SSID; // comes from config.h
 const char* password = WiFi_SSID_PSWD; // comes from config.h
+const uint64_t sleep_time = SLEEP_DURATION * 1e6; // sleep time in uS for the ESP in between readings
 espnow_message myData;
 char device_id[13];
 OneWire oneWire(ONE_WIRE_BUS);
@@ -156,17 +157,17 @@ void loop() {
 
     float batt_level = (avg_batt_volt.getAverage()/1023.0)* RESISTOR_CONST;
     myData.floatvalue2 = batt_level;
+    DPRINT("Battery:");DPRINTLN(myData.floatvalue2);
 
     //Set other values to send
     // If devicename is not given then generate one from MAC address stripping off the colon
-    if(DEVICE_NAME == "")
-    {
+    #ifndef DEVICE_NAME
       String wifiMacString = WiFi.macAddress();
       wifiMacString.replace(":","");
       snprintf(myData.device_name, 16, "%s", wifiMacString.c_str());
-    }
-    else
+    #else
       strcpy(myData.device_name,DEVICE_NAME);
+    #endif
 //    myData.intvalue1 = 0;
     myData.intvalue2 = 0;
     myData.intvalue3 = 0;
@@ -178,25 +179,27 @@ void loop() {
     myData.message_id = millis();//there is no use of message_id so using it to send the uptime
       
     //int result = esp_now_send(gatewayAddress, (uint8_t *) &myData, sizeof(myData));
-    int result = sendESPnowMessage(&myData,gatewayAddress,1,false);
-    if (result == 0) {
-      DPRINTLN("Delivered with success");}
-    else {DPRINTFLN("Error sending/receipting the message, error code:%d",result);}
+    bool result = sendESPnowMessage(&myData,gatewayAddress,1,true);
+    if (result == 0) 
+      {DPRINTLN("Delivered with success");}
+    else 
+      {DPRINTLN("Message not delivered");}
     
     #if(USING(TESTING)) // If we are testing then it sends a message MAX_COUNT times
     {
-      delay(1);
+      delay(15000);
     }
     #else 
         break;
     #endif
   }
-  DPRINTLN("Going to sleep");
+  DPRINTFLN("Going to sleep for %d secs",SLEEP_DURATION);
   DFLUSH();
   digitalWrite(SENSOR_POWER_PIN,LOW);//remove power to the sensor module else it consumes power (~ 20uA more)
-  //ESP.deepSleep(SLEEP_DURATION*10e6); // This statement does not work - not sure why, I am going crazy behind this.
-  // The solution is to hardcode the value for time instead of taking from a #define
-  // The problem I face is that with the above statement , ESP never wakes up after the first sleep, sometimes it doesnt even start up
-  ESP.deepSleep(30*10e6);
+  ESP.deepSleep(sleep_time);
+  //ESP.deepSleep(SLEEP_DURATION*10e6); // This statement does not work - not sure why, It seems deepsleep expects a integer and cannot accept calculations
+  // The strange thing that happens if I use the above statement is that the ESP goes into a trance mode and never comes up. 
+  // Even worse as I have a large cap 1000uF across the ESP power, even if I disconnect and reconnect the power the ESP does not come back unless
+  // I drain the cap and then supply power again
 
 }
