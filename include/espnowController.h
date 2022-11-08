@@ -217,6 +217,16 @@ void initilizeESP(const char ssid[MAX_SSID],esp_now_role role, bool forceChannel
 
 #if defined(ESP8266)
 /*
+* Deletes the peer. 
+* peer - esp_now_peer_info_t struct containing address of peer eg: {0x05, 0xFF, 0xAF, 0x02, 0xFF, 0x02}
+*/
+void delete_peer(uint8_t peerAddress[])
+{
+  //delete peer if it is present
+  esp_now_del_peer(peerAddress);//delete peer if it is present
+}
+
+/*
 * Deletes and re-adds the peer. As peer is channel specific, call this when adding a peer for the first time or when channel number changes
 * peerAddress - address of peer, an array of 8 uint8_t elements  eg: {0x05, 0xFF, 0xAF, 0x02, 0xFF, 0x02}
 * key - security key - , an array of 16 uint8_t elements OR NULL  eg: {0x33, 0x43, 0x33, 0x14, 0x33, 0x44, 0x33, 0xF4, 0x00, 0x64, 0xA3, 0x24, 0x73, 0x43, 0x3C, 0x55}
@@ -224,7 +234,7 @@ void initilizeESP(const char ssid[MAX_SSID],esp_now_role role, bool forceChannel
 */
 bool refreshPeer(uint8_t peerAddress[],const uint8_t key[],esp_now_role role)
 {
-    esp_now_del_peer(peerAddress);//delete peer if it is present
+    delete_peer(peerAddress);//delete peer if it is present
     //Add peer , Note: There is no method in ESP8266 to add a peer by passing esp_now_peer_info_t object unlike ESP32
     if (esp_now_add_peer((uint8_t*)peerAddress, role, slave_channel,(uint8_t*) key, key == NULL ? 0 : KEY_LEN) != 0){
         DPRINTFLN("Failed to add peer on channel:%u",slave_channel);
@@ -240,15 +250,24 @@ bool refreshPeer(uint8_t peerAddress[],const uint8_t key[],esp_now_role role)
     return true;
 }
 #elif defined(ESP32)
+
+/*
+* Deletes the peer. 
+* peer - esp_now_peer_info_t struct containing address of peer eg: {0x05, 0xFF, 0xAF, 0x02, 0xFF, 0x02}
+*/
+void delete_peer(esp_now_peer_info_t *peer)
+{
+  //delete peer if it is present
+  if(esp_now_is_peer_exist(peer->peer_addr))
+    esp_now_del_peer(peer->peer_addr);
+}
 /*
 * Deletes and re-adds the peer. As peer is channel specific, call this when adding a peer for the first time or when channel number changes
 * peer - esp_now_peer_info_t struct containing address of peer eg: {0x05, 0xFF, 0xAF, 0x02, 0xFF, 0x02} and other details
 */
 bool refreshPeer(esp_now_peer_info_t *peer)
 {
-    //delete peer if it is present
-    if(esp_now_is_peer_exist(peer->peer_addr))
-      esp_now_del_peer(peer->peer_addr);
+    delete_peer(peer);
     
     // Set the right channel of the peer
     peer->channel = slave_channel;
@@ -282,9 +301,14 @@ bool sendESPnowMessage(espnow_message *myData,uint8_t peerAddress[], short retri
   for(short i = 0;i<=retries;i++)
   {
     int result = esp_now_send(peerAddress, (uint8_t *) myData, sizeof(*myData));
-    //if (result == 0) DPRINTLN("Sent message, waiting for delivery...");
-    //else DPRINTLN("Error sending the message");
-    
+    if (result == 0)
+      {DPRINTLN("Sent message, waiting for delivery...");}
+    else
+      {DPRINTFLN("Error sending the message, error code: %d",result);}
+
+    // if(result == ESP_ERR_ESPNOW_NOT_INIT)
+    //   DPRINT("ESP not init");
+
     if(ack)
     {
       #if USING(EEPROM_STORE)

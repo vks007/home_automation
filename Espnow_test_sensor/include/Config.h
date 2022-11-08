@@ -11,7 +11,7 @@
   #define MY_ROLE                 ESP_NOW_ROLE_CONTROLLER              // set the role of this device: CONTROLLER, SLAVE, COMBO
   #define RECEIVER_ROLE           ESP_NOW_ROLE_COMBO              // set the role of the receiver : CONTROLLER, SLAVE, COMBO
   #define DEVICE_NAME             "test_sensor" //max 15 characters without spaces
-  uint8_t gatewayAddress[] =      ESP32_DEVKIT_AP_MAC; //comes from secrets.h
+  uint8_t gatewayAddress[] =      GATEWAY_FF_AP_MAC;//ESP32_DEVKIT_AP_MAC; //comes from secrets.h
   #define WiFi_SSID               primary_ssid //from secrets.h
   #define SLEEP_DURATION          10 // sleep time interval in seconds , see notes on its usage, this isnt working well
 #else

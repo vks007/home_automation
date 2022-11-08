@@ -27,6 +27,10 @@
 		{
 			"name": "Espnow_test_sensor",
 			"path": "..\\Espnow_test_sensor"
+		},
+		{
+			"name": "PZEM_espnow",
+			"path": "..\\PZEM_espnow"
 		}
 	],
 	"settings": {}

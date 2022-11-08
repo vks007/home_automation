@@ -5,9 +5,15 @@
 
 #define OTA_MSG "OTA" // ota message , if received triggers an OTA mode
 typedef enum {
-    ESPNOW_OTA        = 0,
-    ESPNOW_SENSOR         = 1
+    ESPNOW_SENSOR         = 0,
+    ESPNOW_OTA        = 1
 } msg_type_t;
+
+typedef enum {
+    MODE_NORMAL           = 0,
+    MODE_OTA_START        = 1,
+    MODE_OTA_END          = 2
+} espnow_mode_t;
 
 typedef struct espnow_device
 {

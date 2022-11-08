@@ -11,7 +11,7 @@
   #define EEPROM_STORE            IN_USE // If EEPROM is in use or not
   #define MY_ROLE                 ESP_NOW_ROLE_IDLE  // This is reduntant for ESP32 and only applicable for ESP8266
   #define STATUS_LED              IN_USE // If Status LED is used or not, affects battery
-  #define OTA                     IN_USE // If Status LED is used or not, affects battery
+  #define OTA                     IN_USE // If OTA mode is in use or not
   #define DEVICE_NAME             "touch_sensor1" //max 15 characters without spaces
   uint8_t gatewayAddress[] =      GATEWAY_TEST_AP_MAC; //comes from secrets.h
   #define WiFi_SSID               primary_ssid //from secrets.h

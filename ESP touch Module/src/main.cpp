@@ -6,7 +6,7 @@
 // ************ HASH DEFINES *******************
 #define MSG_WAIT_TIMEOUT 30 // time in ms to wait for receiving any incoming messages to this ESP , typically 10-40 ms
 #define OTA_TIMEOUT 60 // time in seconds beyond which to come out of OTA mode
-#define VERSION "1.1.0"
+#define VERSION "1.1"
 // ************ HASH DEFINES *******************
 
 #include <Arduino.h>

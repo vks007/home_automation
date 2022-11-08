@@ -63,8 +63,11 @@
 const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 strings adjacent to each other become pasted together as one long string
 #define KEY_LEN  16 // lenght of PMK & LMK key (fixed at 16 for ESP)
 #define MQTT_RETRY_INTERVAL 5000 //MQTT server connection retry interval in milliseconds
+#define STATE_TOPIC "/state" // end path of topic to publish state of the messages
+#define OTA_TOPIC "/ota" // end path of topic to publish ota messages
+#define ERROR_TOPIC "/error" // end path of topic to publish error messages
 #define QUEUE_LENGTH 50 // max no of messages the ESP should queue up before replacing them, limited by amount of free memory
-#define MAX_MESSAGE_LEN 251 // defnies max message length, as the max espnow allows is 250, cant exceed it
+#define MAX_MESSAGE_LEN 500 // defnies max message length
 #define HEALTH_INTERVAL 30e3 // interval is millisecs to publish health message for the gateway
 #ifndef ESP_OK
   #define ESP_OK 0 // This is defined for ESP32 but not for ESP8266 , so define it
@@ -107,8 +110,12 @@ WiFiClient espClient;
 PubSubClient client(espClient);
 static espnow_message emptyMessage;
 espnow_message currentMessage = emptyMessage;
-AsyncWebServer server(80);
-const char* input_param_mac = "input_mac";
+
+#if(USING(ESPNOW_OTA_SERVER))
+  AsyncWebServer server(80);
+  const char* input_param_mac = "input_mac";
+#endif
+
 
 #if USING(MOTION_SENSOR)
 pir_sensor motion_sensor(PIR_PIN,MOTION_ON_DURATION);
@@ -225,14 +232,21 @@ bool publishToMQTT(espnow_message msg) {
   // create a path for this specific device which is of the form MQTT_BASE_TOPIC/<master_id> , master_id is usually the mac address stripped off the colon eg. MQTT_BASE_TOPIC/2CF43220842D
   strcpy(publish_topic,MQTT_BASE_TOPIC);
   strcat(publish_topic,"/");
-  //DPRINT("master_id:");DPRINTLN(msg.master_id);
   strcat(publish_topic,msg.device_name); // from here on all messages would be published within this topic specific for this device
   strcpy(final_publish_topic,publish_topic);
-  strcat(final_publish_topic,"/state");// create a topic to publish the state of the device
-  //DPRINT("Final topic:");DPRINTLN(final_publish_topic);
+  if(msg.msg_type == ESPNOW_SENSOR)
+    strcat(final_publish_topic,STATE_TOPIC);// create a topic to publish the state of the device
+  else if(msg.msg_type == ESPNOW_OTA)
+    strcat(final_publish_topic,OTA_TOPIC);// create a topic to publish the ota state of the device
+  else // unknown message type , publish this on the error topic
+    strcat(final_publish_topic,ERROR_TOPIC);// create a topic to publish error
+
   DPRINTF("publishToMQTT:%lu,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
   
   StaticJsonDocument<MAX_MESSAGE_LEN> msg_json;
+  msg_json["gateway"] = WiFi.hostname();
+  msg_json["type"] = msg.msg_type;
+  msg_json["mac"] = msg.sender_mac;
   msg_json["id"] = msg.message_id;
   msg_json["device"] = msg.device_name;
   msg_json["ival1"] = msg.intvalue1;
@@ -363,12 +377,13 @@ void printInitInfo()
 
 }
 
+#if(USING(ESPNOW_OTA_SERVER))
 void notFound(AsyncWebServerRequest *request) {
   request->send(404, "text/plain", "Not found");
 }
 
 /*
- * repeatedly sends OTA message to an ESP for a certain duration 
+ * Adds ESP MAC as a peer to which OTA messages need to be send and sets the relevant flags. The loop() then takes care of sending the messages to this device
  * param: peerAddress: address of the peer as an uint8 array
  * param: duration : duration in sec for which to keep sending this message
  * param: stop_on_delivery : flag to indicate it it should stop sending messages once it gets the delivery confirmation
@@ -393,7 +408,8 @@ void prepare_for_OTA(uint8_t peerAddress[])
   esp_ota_device.ota_mode = true; // set the ota flag which will trigger the OTA flow in loop()
   esp_ota_device.ota_done = false; // reset the success flag
   start_time = millis(); // start the timer
-  DPRINTLN("OTA prepared for device");
+  //DPRINTLN("Device prepared for sending OTA messages:%02X:%02X:%02X:%02X:%02X:%02X ",peerAddress[0],peerAddress[1],peerAddress[2],peerAddress[3],peerAddress[4],peerAddress[5]);
+  DPRINTLN("Device prepared for sending OTA messages");
 }
 
 void config_webserver()
@@ -413,7 +429,7 @@ void config_webserver()
         mac_addr = request->getParam(input_param_mac)->value();
         if(validate_MAC(mac_addr.c_str()))
         {
-          DPRINTFLN("MAC %s is valid %02X:%02X:%02X:%02X:%02X:%02X",mac_addr.c_str(),esp_ota_device.mac[0],esp_ota_device.mac[1],esp_ota_device.mac[2],esp_ota_device.mac[3],esp_ota_device.mac[4],esp_ota_device.mac[5]);
+          DPRINTFLN("MAC %s is valid",mac_addr.c_str());
           mac_addr.replace(MAC_DELIMITER,"");
           MAC_to_array(mac_addr.c_str(),esp_ota_device.mac,6);
           prepare_for_OTA(esp_ota_device.mac);
@@ -442,12 +458,16 @@ void config_webserver()
   server.onNotFound(notFound);
   server.begin();  
 }
+#endif
+
 
 /*
  * Initializes the ESP with espnow and WiFi client , OTA etc
  */
 void setup() {
   // Initialize Serial Monitor , if we're usng pin 3 on ESP8266 for PIR then initialize Serial as Tx only , disable Rx
+  // ATTENTION : this is not working as inteded as PIR still holds Rx as LOW while startup and so the ESP doesnt boot
+  // As a temp solution , dont turn ON Serial if you're using Rx as PIR PIN
   #if USING(MOTION_SENSOR)
   if(PIR_PIN == 3)
     {DBEGIN(115200, SERIAL_8N1, SERIAL_TX_ONLY);}
@@ -555,8 +575,9 @@ void setup() {
     }
   });
   ArduinoOTA.begin();
-
+  #if(USING(ESPNOW_OTA_SERVER))
   config_webserver();
+  #endif
   reconnectMQTT(); //connect to MQTT before publishing the startup message
   if(publishHealthMessage(true)) //publish the startup message
     initilized = true;
@@ -607,27 +628,7 @@ void loop() {
     if(currentMessage != emptyMessage)
     {
       DPRINTFLN("Processing msg:%lu,%d",currentMessage.message_id,currentMessage.msg_type);
-      if(currentMessage.msg_type == ESPNOW_OTA)
-      {
-        if(esp_ota_device.ota_mode)
-        {
-          char buffer[18];
-          sprintf(buffer, "%02X:%02X:%02X:%02X:%02X:%02X",esp_ota_device.mac[0],esp_ota_device.mac[1],esp_ota_device.mac[2],esp_ota_device.mac[3],esp_ota_device.mac[4],esp_ota_device.mac[5] );
-          if(xstrcmp(buffer,currentMessage.sender_mac))
-          {
-            esp_ota_device.ota_mode = false;
-            esp_ota_device.ota_done = true;
-            DPRINTLN("OTA successfuly completed for device:");
-          }
-          else
-            DPRINTFLN("MAC address of OTA device did not match. Target mac: %s , MAC in msg: %s",buffer,currentMessage.sender_mac);
-        }
-        else
-          DPRINTLN("OTA ack message received when not in OTA mode, ignoring...");
-        message_count++;
-        currentMessage = emptyMessage;
-      }
-      else if(currentMessage.msg_type == ESPNOW_SENSOR)
+      if(currentMessage.msg_type == ESPNOW_SENSOR)
       {
         if(publishToMQTT(currentMessage))
         {
@@ -639,6 +640,31 @@ void loop() {
           retry_message = true;
         }//else the same message will be retried the next time
       }
+      #if(USING(ESPNOW_OTA_SERVER))
+      else if(currentMessage.msg_type == ESPNOW_OTA)
+      {
+        if(esp_ota_device.ota_mode)
+        {
+          char buffer[18];
+          sprintf(buffer, "%02X:%02X:%02X:%02X:%02X:%02X",esp_ota_device.mac[0],esp_ota_device.mac[1],esp_ota_device.mac[2],esp_ota_device.mac[3],esp_ota_device.mac[4],esp_ota_device.mac[5] );
+          if(xstrcmp(buffer,currentMessage.sender_mac))
+          {
+            esp_ota_device.ota_mode = false;
+            esp_ota_device.ota_done = true;
+            delete_peer(esp_ota_device.mac);// now that we're done with OTA , delete the peer
+            DPRINTLN("OTA successfuly completed for device:");
+          }
+          else
+            DPRINTFLN("MAC address of OTA device did not match. Target mac: %s , MAC in msg: %s",buffer,currentMessage.sender_mac);
+        }
+        else
+          DPRINTLN("OTA ack message received when not in OTA mode, ignoring...");
+        // pubish the OTA message to MQTT
+        publishToMQTT(currentMessage);
+        message_count++;
+        currentMessage = emptyMessage;
+      }
+      #endif
       else
       {
         DPRINTLN("message received without msg_type set, ignoring...");
@@ -664,6 +690,7 @@ void loop() {
   }
   statusLED.loop();
 
+  #if(USING(ESPNOW_OTA_SERVER))
   if(esp_ota_device.ota_mode && !esp_ota_device.ota_done)
   {
     if(millis() < (start_time + OTA_TRIGGER_DURATION*1000))
@@ -686,8 +713,10 @@ void loop() {
     {
       esp_ota_device.ota_mode = false;
       esp_ota_device.ota_done = true;
-      DPRINTLN("OTA timed out without acknowlegdment for device:");
+      delete_peer(esp_ota_device.mac);// now that we're done with OTA , delete the peer
+      DPRINTLN("OTA timed out without acknowlegdment from device");
     }
   }
+  #endif
 
 }
