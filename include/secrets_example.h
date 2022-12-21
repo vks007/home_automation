@@ -31,9 +31,20 @@
 	{0x4C, 0x64, 0x33, 0x22, 0x44, 0x2D} ,\
 	{0x3C, 0x2D, 0x12, 0x73, 0x41, 0x88}\
 	}
-#define GATEWAY_FF_MAC {0x22, 0x41, 0x44, 0x55, 0xA2, 0x8E} //- This is the SoftAP MAC addr of the ESP01 FF Gateway
-#define GATEWAY_GF_MAC {0xEE, 0xFF, 0x12, 0x13, 0xF7, 0x5D} //- This is the SoftAP MAC addr of the ESP01 GF Gateway
-#define BROADCAST_MAC  {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}// broadcast gateway - to everyone
+//Define custom MAC addresses of your espnow devices, this has an advantage that you can change your device without affecting any code/configuration
+// First 3 octet of the MAC are Manufacturer's ID , second 3 octet are device ID
+// MAC addresses of gateway devices
+#define GATEWAY_FF_AP_MAC {0x62, 0x01, 0x94, 0xFF, 0xFF, 0x01}//62:01:94:AB:16:01 - This is a custom SoftAP MAC addr of the ESP01 FF Gateway (defined randomly) - This is currently in use
+#define GATEWAY_TEST_AP_MAC  {0x62, 0x01, 0x94, 0xFF, 0xFF, 0x02}//62:01:94:AB:16:02 - This is custom mac defined for testing
+#define BROADCAST_AP_MAC  {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}// broadcast MAC - to everyone
+#define ESP32_DEVKIT_AP_MAC  {0x24, 0x0A, 0xC4, 0xF9, 0xCB, 0xD4}//62:01:94:AB:16:03
+
+// MAC addresses of sensor devices
+#define MAIN_DOOR_AP_MAC {0x62, 0x01, 0x94, 0xFF, 0x01, 0x01}//62:01:94:AB:15:01 - This is a custom SoftAP MAC addr
+#define TERRACE_DOOR_AP_MAC {0x62, 0x01, 0x94, 0xFF, 0x01, 0x02}//62:01:94:AB:15:01
+#define BALCONY_DOOR_AP_MAC {0x62, 0x01, 0x94, 0xFF, 0x01, 0x03}//62:01:94:AB:15:03
+#define TEST_DOOR_AP_MAC {0x62, 0x01, 0x94, 0xFF, 0x01, 0x04}//62:01:94:AB:15:04
+#define SOLAR_SENSOR_AP_MAC {0x62, 0x01, 0x94, 0xFF, 0x01, 0x05}//62:01:94:AB:15:05
 
 #endif
 
