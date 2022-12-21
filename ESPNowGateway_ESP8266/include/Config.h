@@ -10,11 +10,12 @@
 
 #if (DEVICE == GATEWAY_FF)
   //Turn features ON and OFF below start
-  #define SERIAL_DEBUG            NOT_IN_USE // Debug statements in use or not , dont turn it ON as I am using RX pin for MOTION SENSOR
+  #define SERIAL_DEBUG            IN_USE // Debug statements in use or not , dont turn it ON if you are using RX pin for MOTION SENSOR
   #define SECURITY                NOT_IN_USE // encryption of messages
-  #define MOTION_SENSOR           IN_USE // if a motion sensor is connected to the ESP as an optional sensor
-  #define EEPROM_STORE            NOT_IN_USE // If EEPROM is in use or not
-  #define ESPNOW_OTA_SERVER       NOT_IN_USE // If using this ESP as a trigger for ESPNOW OTA
+  #define MOTION_SENSOR           NOT_IN_USE // if a motion sensor is connected to the ESP as an optional sensor
+  #define EEPROM_STORE            NOT_IN_USE // If EEPROM is in use or not, at present only needed for sensor devices, gateway has not present use
+  #define ESPNOW_OTA_SERVER       IN_USE // If enabled this device acts as a trigger for ESPNOW OTA
+  #define WEBSOCKETS              NOT_IN_USE // if using web sockets to see logs via the browser
   //Turn features ON and OFF below ----------- end
 
   #define MY_ROLE                 ESP_NOW_ROLE_SLAVE              // set the role of this device: CONTROLLER, SLAVE, COMBO

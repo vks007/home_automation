@@ -11,6 +11,7 @@
  * - DONE - Do not pop out the message form the queue in case posting to MQTT isnt successful
  * 
  * TO DO :
+ * - implement encryption, instead of using inbuilt one you can use Chacha for encryption, see this library for details : https://github.com/eccnil/ESPNow2Mqtt
  * - encryption isnt working. Even if I change the keys on the master to random values, the slave is able to receieve the messages, so have to debug later
  *  if you can solve the encryption issue, remove it as with excryption , an eSP8266 can only connect to 6 other peers, ESP32 can connect to 10 other
  *  while without encryption they can connect to 20 peers, encryption eg from :https://github.com/espressif/ESP8266_NONOS_SDK/issues/114#issuecomment-383521100
@@ -19,6 +20,7 @@
  * - Introduce a status LED for MQTT connection status
  * - Implement a restart of ESP after configurable interval if the connection to MQTT is not restored
  * - To Support COMBO role where it can receive and send messages
+ * - Support automatic pairing of peers , see here for ideas : https://randomnerdtutorials.com/esp-now-auto-pairing-esp32-esp8266/
  */
 
 // IMPORTANT : Compile it for the device you want, details of which are in Config.h
@@ -26,6 +28,7 @@
  * Also I have to find a way to create a list of multiple controllers as with security you haev to register each controller separately
  * See ref code here: https://www.electrosoftcloud.com/en/security-on-your-esp32-with-esp-now/
 */
+//#define MQTT_MAX_PACKET_SIZE 2048
 
 #include <Arduino.h>
 #ifdef ESP32
@@ -59,7 +62,7 @@
 #define VERSION "1.2"
 #define MAC_DELIMITER ":" // delimiter with which MAC address is separated
 #define OTA_TRIGGER_DURATION 10 // time in secs for which trigger the ESPNOW OTA messages
-#define OTA_MSG_INTERVAL  15 //interval in ms at which to repeat OTA messages
+#define OTA_MSG_INTERVAL  50 //interval in ms at which to repeat OTA messages
 const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 strings adjacent to each other become pasted together as one long string
 #define KEY_LEN  16 // lenght of PMK & LMK key (fixed at 16 for ESP)
 #define MQTT_RETRY_INTERVAL 5000 //MQTT server connection retry interval in milliseconds
@@ -67,7 +70,8 @@ const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 
 #define OTA_TOPIC "/ota" // end path of topic to publish ota messages
 #define ERROR_TOPIC "/error" // end path of topic to publish error messages
 #define QUEUE_LENGTH 50 // max no of messages the ESP should queue up before replacing them, limited by amount of free memory
-#define MAX_MESSAGE_LEN 500 // defnies max message length
+#define MAX_MSG_BUFFER_SIZE 512 // max size of the MQTT packet buffer, it includes topic name+payload+header bytes, set your payload max lenn accordingly using MAX_MESSAGE_LEN below 
+#define MAX_MESSAGE_LEN 412 // defines max message length of payload message. Included space for 100 bytes for topic name + header
 #define HEALTH_INTERVAL 30e3 // interval is millisecs to publish health message for the gateway
 #ifndef ESP_OK
   #define ESP_OK 0 // This is defined for ESP32 but not for ESP8266 , so define it
@@ -76,6 +80,7 @@ const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 
 #ifndef API_TIMEOUT
   #define API_TIMEOUT 600 // define default timeout of monitoring for MQTT connection if not defined.
 #endif
+#define MAX_MQTT_PUBLISH_FAILURES 5 //max no of times MQTT publishing can fail even though the MQTT client was connected beyond which ESP restart happens
 // ************ HASH DEFINES *******************
 
 // ************ GLOBAL OBJECTS/VARIABLES *******************
@@ -86,6 +91,7 @@ bool retry_message = false; // flag to indicate to retry sending of message in c
 long last_message_count = 0;//stores the last count with which message rate was calculated
 long message_count = 0;//keeps track of total no of messages publshed since uptime
 long lastReconnectAttempt = 0; // Keeps track of the last time an attempt was made to connect to MQTT
+short mqtt_publish_fails = 0; //tracks the no of times MQTT publishing has failed even though the MQTT client was connected
 bool initilized = false; // flag to track if initialisation of the ESP has finished. At present it only handles tracking of the "init" message published on startup
 extern "C"
 { 
@@ -178,19 +184,6 @@ bool reconnectMQTT()
           statusLED.cancel();
         return true;
       }
-    //   else 
-    //   {
-    //     DPRINT("failed, rc=");
-    //     DPRINT(client.state());
-    //     if(pinger.Ping(WiFi.gatewayIP()))
-    //     {
-    //       DPRINTLN("ping to gateway success");
-    //     }
-    //     else
-    //     {
-    //       DPRINTLN("ping to gateway failed");
-    //     }
-    //   }
     }
     if(statusLED.getState() == LED_IDLE)
       statusLED.blink(1000, 500);
@@ -206,19 +199,34 @@ bool reconnectMQTT()
  */
 bool publishToMQTT(const char msg[],const char topic[], bool retain)
 {
+  DPRINTFLN("msg:%s",msg);
   if(client.connected())
   {
     if(client.publish(topic,msg,retain))
     {
       DPRINT("publishToMQTT-Published:");DPRINTLN(msg);
+      if(mqtt_publish_fails>0)
+        mqtt_publish_fails = 0;//reset the counter
       return true;
     }
     else
     {
-      DPRINT("publishToMQTT-Failed:");DPRINTLN(msg);
+      mqtt_publish_fails++;
+      if(mqtt_publish_fails >= MAX_MQTT_PUBLISH_FAILURES)
+      {
+        DPRINTLN("publishToMQTT-Failed max allowed times. triggering ESP restart");
+        MQTT_wd.update(false,true); // ask the watchdog to restart the ESP
+      }
+      else
+      {
+        // see if disconnecting the client will solve the issue
+        client.disconnect();
+        DPRINTLN("publishToMQTT-Failed, willfully disconnected MQTT.");
+      }
     }
   }
-  DPRINTLN("Publish failed - MQTT not connected");
+  else
+    DPRINTLN("Publish failed - MQTT not connected");
   return false;
 }
 
@@ -241,7 +249,7 @@ bool publishToMQTT(espnow_message msg) {
   else // unknown message type , publish this on the error topic
     strcat(final_publish_topic,ERROR_TOPIC);// create a topic to publish error
 
-  DPRINTF("publishToMQTT:%lu,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
+//  DPRINTF("publishToMQTT:%lu,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
   
   StaticJsonDocument<MAX_MESSAGE_LEN> msg_json;
   msg_json["gateway"] = WiFi.hostname();
@@ -262,8 +270,8 @@ bool publishToMQTT(espnow_message msg) {
   
   String str_msg="";
   serializeJson(msg_json,str_msg);
+  DPRINTF("Going to publish message with len:%u\n",measureJson(msg_json));
   return publishToMQTT(str_msg.c_str(),final_publish_topic,false);
-  //DPRINTF("published message with len:%u\n",measureJson(msg_json));
 }
 
 /*
@@ -477,20 +485,19 @@ void setup() {
     {DBEGIN(115200);}
   #endif
 
+  DPRINTFLN("Value of MQTT_MAX_PACKET_SIZE is %u",MQTT_MAX_PACKET_SIZE);
   printInitInfo();
 
   // Set the device as a Station and Soft Access Point simultaneously
-  WiFi.mode(WIFI_AP_STA); // This has to be WIFI_AP_STA and not WIFI_STA, I dont know why but if set to WIFI_STA then it can only receive broadcast messages
-  // and stops receiving MAC specific messages.
+  // This has to be WIFI_AP_STA and not WIFI_STA, if set to WIFI_STA then it can only receive broadcast messages and stops receiving MAC specific messages.
+  // The main problem seems to be caused by the station mode WiFi going into sleep mode while you have no work. This means that it does not listen to receive ESP-Now packets
+  // and therefore they are lost. To solve this we will have to force our microcontroller to listen continuously, and this is achieved by turning it into an AP (Access Point)
+  WiFi.mode(WIFI_AP_STA); 
+
   // Set a custom MAC address for the device. This is helpful in cases where you want to replace the actual ESP device in future
   // A custom MAC address will allow all sensors to continue working with the new device and you will not be required to update code on all devices
   uint8_t customMACAddress[] = DEVICE_MAC; // defined in Config.h
-  if(wifi_set_macaddr(SOFTAP_IF, &customMACAddress[0]))
-    { DPRINT("Successfully set a custom MAC address as:");
-      DPRINTLN(WiFi.softAPmacAddress());
-    }
-    else
-    {DPRINT("Failed to set custom MAC address:");}
+  setCustomMAC(customMACAddress,false);
 
   pinMode(STATUS_LED,OUTPUT);
   WiFi.config(ESP_IP_ADDRESS, default_gateway, subnet_mask);//from secrets.h
@@ -498,11 +505,7 @@ void setup() {
   device_name.replace("_","-");//hostname dont allow underscores or spaces
   WiFi.hostname(device_name.c_str());// Set Hostname.
 
-
-  // For Station Mode
-  //wifi_set_macaddr(STATION_IF, &newMACAddress[0]);
-
-  // Set device as a Wi-Fi Station
+  // Connect to the WiFi as a station device
   WiFi.begin(ssid, password);
   DPRINTLN("Setting as a Wi-Fi Station..");
   while (WiFi.status() != WL_CONNECTED) {
@@ -578,6 +581,15 @@ void setup() {
   #if(USING(ESPNOW_OTA_SERVER))
   config_webserver();
   #endif
+  //set MQTT buffer size
+  if(client.getBufferSize() < MAX_MSG_BUFFER_SIZE)
+  {
+    if(!client.setBufferSize(MAX_MSG_BUFFER_SIZE))
+      {DPRINTFLN("Failed to set MQTT buffer size to %d. Any messages over %d will fail to publish",MAX_MSG_BUFFER_SIZE,MQTT_MAX_PACKET_SIZE);}
+    else
+      {DPRINTFLN("Set MQTT buffer size to %d",MAX_MSG_BUFFER_SIZE);}
+  }
+  
   reconnectMQTT(); //connect to MQTT before publishing the startup message
   if(publishHealthMessage(true)) //publish the startup message
     initilized = true;
@@ -617,7 +629,6 @@ void loop() {
   #endif
 
   ArduinoOTA.handle();
-  
   if(client.connected())
   {
     if(!structQueue.isEmpty())
@@ -655,7 +666,7 @@ void loop() {
             DPRINTLN("OTA successfuly completed for device:");
           }
           else
-            DPRINTFLN("MAC address of OTA device did not match. Target mac: %s , MAC in msg: %s",buffer,currentMessage.sender_mac);
+            {DPRINTFLN("MAC address of OTA device did not match. Target mac: %s , MAC in msg: %s",buffer,currentMessage.sender_mac);}
         }
         else
           DPRINTLN("OTA ack message received when not in OTA mode, ignoring...");
@@ -700,6 +711,7 @@ void loop() {
         myData.message_id = millis();
         bool result = sendESPnowMessage(&myData,esp_ota_device.mac,0,false);
         last_msg_sent_time = millis();
+        //yield();// trying this out to see if the MQTT disconect bug gets solved
         if(result)
         {
           //DPRINTFLN("%lu: sent OTA message",myData.message_id);

@@ -25,7 +25,7 @@ class watchDog
     int getTimeout()
     { return _timeout/1000;}
     
-    void update(bool monitor_flag)
+    void update(bool monitor_flag, bool instant_restart = false)
     {
         _monitor_flag = monitor_flag;
         if(monitor_flag)
@@ -34,7 +34,7 @@ class watchDog
         }
         else
         {
-            if( int(millis() - _last_timestamp) > _timeout)
+            if( (int(millis() - _last_timestamp) > _timeout) || instant_restart)
             {
                 ESP.restart();
             }
