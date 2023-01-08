@@ -11,6 +11,9 @@
  * - DONE - Do not pop out the message form the queue in case posting to MQTT isnt successful
  * 
  * TO DO :
+ * - replace EEPROM library with LittleFS as EEPROM is deprecated
+ * - implement passing of OTA trigger params like , timeperiod, interval via web page rather than hard coded
+ * - implement websockets to indicate progress of OTA trigger and its result
  * - implement encryption, instead of using inbuilt one you can use Chacha for encryption, see this library for details : https://github.com/eccnil/ESPNow2Mqtt
  * - encryption isnt working. Even if I change the keys on the master to random values, the slave is able to receieve the messages, so have to debug later
  *  if you can solve the encryption issue, remove it as with excryption , an eSP8266 can only connect to 6 other peers, ESP32 can connect to 10 other
@@ -49,6 +52,7 @@
 #include <ArduinoOTA.h> 
 #include "espnowMessage.h" // for struct of espnow message
 #include <PubSubClient.h> // library for MQTT
+#include <HARestAPI.h> // library to make rest API calls to Home Assistant (included locally)
 #include <Pinger.h> // used for pinging a server (gatewya) in case of connection issues with MQTT
 #include "myutils.h" // provides some uitlity functions
 #include "espwatchdog.h" // provides capability ot reset the ESP in case it becomes unresponsive
@@ -89,7 +93,6 @@ const char* password = WiFi_SSID_PSWD; // comes from config.h
 long last_time = 0; // last time when health check was published
 bool retry_message = false; // flag to indicate to retry sending of message in case of failure
 long last_message_count = 0;//stores the last count with which message rate was calculated
-long message_count = 0;//keeps track of total no of messages publshed since uptime
 long lastReconnectAttempt = 0; // Keeps track of the last time an attempt was made to connect to MQTT
 short mqtt_publish_fails = 0; //tracks the no of times MQTT publishing has failed even though the MQTT client was connected
 bool initilized = false; // flag to track if initialisation of the ESP has finished. At present it only handles tracking of the "init" message published on startup
@@ -117,6 +120,9 @@ PubSubClient client(espClient);
 static espnow_message emptyMessage;
 espnow_message currentMessage = emptyMessage;
 
+WiFiClient haClient;
+HARestAPI ha_api(haClient);
+
 #if(USING(ESPNOW_OTA_SERVER))
   AsyncWebServer server(80);
   const char* input_param_mac = "input_mac";
@@ -137,7 +143,9 @@ const char index_html[] PROGMEM = R"rawliteral(
   </style>
   </head><body>
   <form action="/espnowota">
-    Enter the MAC Address: <input type="text" name="input_mac">
+    Enter the MAC Address: <input type="text" name="input_mac"><br>
+    Total Duration(s): <input type="text" name="input_duration" value="10"><br>
+    OTA Request Interval(ms): <input type="text" name="input_interval"  value="50"><br>
     <input type="submit" value="Send OTA Request">
   </form><br>
 </body></html>)rawliteral";
@@ -154,6 +162,23 @@ espnow_message myData;
 unsigned long start_time;
 unsigned long last_msg_sent_time;
 espnow_device esp_ota_device;
+typedef struct gateway_stats
+{
+  unsigned long msg_count;
+  unsigned long failed_msg_count;
+  unsigned long cmnd_msg_count;
+  float msg_rate;
+  float free_mem_KB;// free memory in KB
+  unsigned long uptime; // uptime in minutes
+  int rssi;
+  String str_mac;
+  String str_macAP;
+  short wifi_channel;
+  short queue_length;
+  String last_published_msg;
+}gateway_stats;
+gateway_stats gateway;
+
 // ************ GLOBAL OBJECTS/VARIABLES *******************
 #include "espnowController.h" //defines all utility functions for sending espnow messages from a controller
 
@@ -328,9 +353,9 @@ bool publishHealthMessage(bool init=false)
     StaticJsonDocument<MAX_MESSAGE_LEN> init_msg_json;//It is recommended to create a new obj than reuse the earlier one by ArduinoJson
     init_msg_json["version"] = compile_version;
     init_msg_json["tot_memKB"] = (float)ESP.getFlashChipSize() / 1024.0;
-    init_msg_json["mac"] = WiFi.macAddress();
-    init_msg_json["macAP"] = WiFi.softAPmacAddress();
-    init_msg_json["wifiChannel"] = WiFi.channel();
+    init_msg_json["mac"] = gateway.str_mac;
+    init_msg_json["macAP"] = gateway.str_macAP;
+    init_msg_json["wifiChannel"] = gateway.wifi_channel;
     strcpy(publish_topic,MQTT_TOPIC);
     strcat(publish_topic,"/init");
     str_msg="";
@@ -340,13 +365,13 @@ bool publishHealthMessage(bool init=false)
   else
   {
     StaticJsonDocument<MAX_MESSAGE_LEN> msg_json;
-    msg_json["uptime"] = millis()/1000; //publish uptime in seconds
-    msg_json["mem_freeKB"] = serialized(String((float)ESP.getFreeHeap()/ 1024.0,0));//Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
-    msg_json["msg_count"] = message_count;
-    msg_json["queue_len"] = structQueue.itemCount();
-    float message_rate = (message_count - last_message_count)/(float)(HEALTH_INTERVAL/(60*1000));//rate calculated over one minute
-    last_message_count = message_count;//reset the count
-    msg_json["msg_rate"] = serialized(String(message_rate,1));//format with 1 decimal places, Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
+    msg_json["uptime"] = gateway.uptime; // uptime in minutes
+    msg_json["mem_freeKB"] = serialized(String((float)gateway.free_mem_KB,0));//Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
+    msg_json["msg_count"] = gateway.msg_count;
+    msg_json["queue_len"] = gateway.queue_length;
+    float message_rate = (gateway.msg_count - last_message_count)/(float)(HEALTH_INTERVAL/(60*1000));//rate calculated over one minute
+    last_message_count = gateway.msg_count;//reset the count
+    msg_json["msg_rate"] = serialized(String(gateway.msg_rate,1));//format with 1 decimal places, Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
 
     // create a path for this specific device which is of the form MQTT_BASE_TOPIC/<master_id> , master_id is usually the mac address stripped off the colon eg. MQTT_BASE_TOPIC/2CF43220842D
     strcpy(publish_topic,MQTT_TOPIC);
@@ -368,6 +393,19 @@ bool publishHealthMessage(bool init=false)
   }
   return false;//control will never come here
 }
+void update_gateway_stats()
+{
+  gateway.queue_length = structQueue.itemCount();
+  gateway.rssi = WiFi.RSSI();
+  gateway.str_mac = WiFi.macAddress();
+  gateway.str_macAP = WiFi.softAPmacAddress();
+  gateway.uptime = millis()/6000; //publish uptime in minutes
+  gateway.wifi_channel = WiFi.channel();
+  gateway.msg_rate = (gateway.msg_count - last_message_count)/(float)(HEALTH_INTERVAL/(60*1000));//rate calculated over one minute
+  last_message_count = gateway.msg_count;//reset the count
+  gateway.free_mem_KB = ESP.getFreeHeap()/ 1024.0;
+}
+
 
 void printInitInfo()
 {
@@ -440,6 +478,22 @@ void config_webserver()
           DPRINTFLN("MAC %s is valid",mac_addr.c_str());
           mac_addr.replace(MAC_DELIMITER,"");
           MAC_to_array(mac_addr.c_str(),esp_ota_device.mac,6);
+          // now extract the other params
+          String str_temp;
+          if (request->hasParam("input_duration")) {
+            str_temp = request->getParam("input_duration")->value();
+            if(isNumeric(str_temp))
+              esp_ota_device.duration = (short)str_temp.toInt();
+            else
+              esp_ota_device.duration = OTA_TRIGGER_DURATION;
+          }
+          if (request->hasParam("input_interval")) {
+            str_temp = request->getParam("input_interval")->value();
+            if(isNumeric(str_temp))
+              esp_ota_device.interval = (short)str_temp.toInt();
+            else
+              esp_ota_device.interval = OTA_MSG_INTERVAL;
+          }
           prepare_for_OTA(esp_ota_device.mac);
           response_msg = "ESPNOW OTA req sent to device: ";
         }
@@ -598,8 +652,58 @@ void setup() {
     DPRINTLN("Failed to initialize motion sensor");
   #endif
   
+  ha_api.setHAServer(ha_url, ha_port);
+  ha_api.setHAPassword(ha_token);
+
 }
 
+/*
+ * processes the command type messages which are calls to Home Assistant APIs with actions
+ * at present always returns true, which means does not retry if failed.
+ */
+bool process_command_message(espnow_message &msg)
+{
+  if(msg.msg_type != ESPNOW_COMMAND)
+    return false;
+  char msg_data[sizeof(msg.chardata1)*2] = "";
+  strcpy(msg_data,msg.chardata1);
+  DPRINTLN(msg_data);
+  strcat(msg_data,msg.chardata2);
+  DPRINTLN(msg_data);
+  char delim[] = "|";
+  char *ptr = strtok(msg_data, delim);
+  String domain = String(ptr);
+  ptr = strtok(NULL, delim);
+  String action = String(ptr);
+  ptr = strtok(NULL, delim);
+  String data = String(ptr);
+
+  String serviceURL = "/api/services/";
+  serviceURL = serviceURL + domain + "/" + action;
+  DPRINTLN(serviceURL);
+  DPRINTLN(data);
+  ha_api.sendPostHA(serviceURL,data);
+  return true;
+}
+
+
+/*
+ * determines the state of motion sensor and publishes a message accordingly
+ */
+void update_motion_sensor()
+{
+  short motion_state = motion_sensor.update();
+  if(motion_state == 1)
+  {
+    DPRINTLN("Motion detected as ON");
+    publishMotionMsgToMQTT(motion_sensor.getSensorName(),"on");
+  }
+  else if(motion_state == 2)
+  {
+    DPRINTLN("Motion detected as OFF");
+    publishMotionMsgToMQTT(motion_sensor.getSensorName(),"off");
+  }
+}
 
 /*
  * runs the loop to check for incoming messages in the queue, picks them up and posts them to MQTT
@@ -615,17 +719,7 @@ void loop() {
   MQTT_wd.update(client.connected()); //feed the watchdog by calling update
   
   #if USING(MOTION_SENSOR)
-  short motion_state = motion_sensor.update();
-  if(motion_state == 1)
-  {
-    DPRINTLN("Motion detected as ON");
-    publishMotionMsgToMQTT(motion_sensor.getSensorName(),"on");
-  }
-  else if(motion_state == 2)
-  {
-    DPRINTLN("Motion detected as OFF");
-    publishMotionMsgToMQTT(motion_sensor.getSensorName(),"off");
-  }
+    update_motion_sensor();
   #endif
 
   ArduinoOTA.handle();
@@ -643,7 +737,20 @@ void loop() {
       {
         if(publishToMQTT(currentMessage))
         {
-          message_count++;
+          gateway.msg_count++;
+          currentMessage = emptyMessage;
+        }
+        else
+        {
+          retry_message = true;
+        }//else the same message will be retried the next time
+      }
+      else if(currentMessage.msg_type == ESPNOW_COMMAND)
+      {
+        if(process_command_message(currentMessage))
+        {
+          gateway.msg_count++;
+          gateway.cmnd_msg_count++;
           currentMessage = emptyMessage;
         }
         else
@@ -672,14 +779,14 @@ void loop() {
           DPRINTLN("OTA ack message received when not in OTA mode, ignoring...");
         // pubish the OTA message to MQTT
         publishToMQTT(currentMessage);
-        message_count++;
+        gateway.msg_count++;
         currentMessage = emptyMessage;
       }
       #endif
       else
       {
         DPRINTLN("message received without msg_type set, ignoring...");
-        message_count++;
+        gateway.msg_count++;
         currentMessage = emptyMessage;
       }
     }
@@ -696,39 +803,40 @@ void loop() {
         initilized = true;
     }
     //Now publish the health message
+    update_gateway_stats();
     publishHealthMessage();
     last_time = millis(); // This is reset irrespective of a successful publish else the main loop will continously try to publish this message
   }
   statusLED.loop();
 
   #if(USING(ESPNOW_OTA_SERVER))
-  if(esp_ota_device.ota_mode && !esp_ota_device.ota_done)
-  {
-    if(millis() < (start_time + OTA_TRIGGER_DURATION*1000))
+    if(esp_ota_device.ota_mode && !esp_ota_device.ota_done)
     {
-      if((millis() - last_msg_sent_time) > OTA_MSG_INTERVAL)
+      if(millis() < (start_time + esp_ota_device.duration*1000))
       {
-        myData.message_id = millis();
-        bool result = sendESPnowMessage(&myData,esp_ota_device.mac,0,false);
-        last_msg_sent_time = millis();
-        //yield();// trying this out to see if the MQTT disconect bug gets solved
-        if(result)
+        if((millis() - last_msg_sent_time) > esp_ota_device.interval)
         {
-          //DPRINTFLN("%lu: sent OTA message",myData.message_id);
+          myData.message_id = millis();
+          bool result = sendESPnowMessage(&myData,esp_ota_device.mac,0,false);
+          last_msg_sent_time = millis();
+          //yield();// trying this out to see if the MQTT disconect bug gets solved
+          if(result)
+          {
+            //DPRINTFLN("%lu: sent OTA message",myData.message_id);
+          }
+          else
+          {
+            DPRINTFLN("%lu: OTA message sending failed",myData.message_id);}
         }
-        else
-        {
-          DPRINTFLN("%lu: OTA message sending failed",myData.message_id);}
+      }
+      else
+      {
+        esp_ota_device.ota_mode = false;
+        esp_ota_device.ota_done = true;
+        delete_peer(esp_ota_device.mac);// now that we're done with OTA , delete the peer
+        DPRINTLN("OTA timed out without acknowlegdment from device");
       }
     }
-    else
-    {
-      esp_ota_device.ota_mode = false;
-      esp_ota_device.ota_done = true;
-      delete_peer(esp_ota_device.mac);// now that we're done with OTA , delete the peer
-      DPRINTLN("OTA timed out without acknowlegdment from device");
-    }
-  }
   #endif
 
 }

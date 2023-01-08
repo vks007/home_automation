@@ -31,6 +31,10 @@
 		{
 			"name": "PZEM_espnow",
 			"path": "..\\PZEM_espnow"
+		},
+		{
+			"name": "ESP32_Touch_Test",
+			"path": "../ESP32_Touch_Test"
 		}
 	],
 	"settings": {}

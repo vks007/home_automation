@@ -1,4 +1,6 @@
 /*
+ * This is a touch sensor module with multiple touch buttons. Each button is configured to wake up the ESP and post a espnow message 
+ * to the gateway. What each button press does is configured by the gateway.
  *
 */
 //Specify the sensor this is being compiled for in platform.ini, see Config.h for list of all devices this can be compiled for
@@ -32,8 +34,10 @@ esp_now_peer_info_t peerInfo; // This object must be a global object else the se
 int gpio_pin = 100;
 volatile bool msgReceived = false; //flag to indicate if the ESP has received any message during its wake up cycle
 volatile bool ota_msg = false; // indicates if the esp has received a OTA message
-volatile bool ota_mode = false; // determines if the ESP should start in the OTA mode or ESPNOW mode
+volatile espnow_mode_t ota_mode = MODE_NORMAL; // mode in which the ESP starts, this is read from EEPROM in setup()
 unsigned long start_time = millis(); // keeps track of the time ESP started, can be changed in between though
+const unsigned short eeprom_start_add = sizeof(int); // starting address of EEPROm for use of this ESP. This is determined by the space espnowcontroller 
+touch_pad_t touchPin;
 // ************ GLOBAL OBJECTS/VARIABLES *******************
 // need to include this file after ssid variable as I am using ssid inside espcontroller, not a good design but will sort this out later
 #include "espnowController.h" //defines all utility functions for sending espnow messages from a controller
@@ -58,17 +62,30 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   espnow_message msg;
   memcpy(&msg, incomingData, sizeof(msg));
-  if(!ota_msg && !ota_mode) // dont receive any more messages if we are already in OTA mode
+  if(!ota_msg && ota_mode!= MODE_OTA_START) // dont receive any more messages if we are already in OTA mode
   {
+    DPRINTF("Processing msg:%lu,%u,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.msg_type,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
     msgReceived = true;
     if(msg.msg_type == ESPNOW_OTA)
+    {
       ota_msg = true;
-    DPRINTF("Processing msg:%lu,%u,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.msg_type,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
+      DPRINTLN("OTA message receieved");
+    }
   }
   else
     DPRINTF("Ignoring msg:%lu,%u,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
 };
 
+/*
+* Turns LED off after a predermined total time, kills time via delay() if ESP hasnt been ON for that certain time
+* state = true - ON , state = false - OFF
+*/
+void set_led(bool state)
+{
+  #if(USING(STATUS_LED))
+    digitalWrite(LED_GPIO,LED_INVERTED?state:!state); // turn OFF the LED
+  #endif
+}
 void print_init_info()
 {
   DPRINTFLN("Version:%s",compile_version);
@@ -133,10 +150,17 @@ void setup_OTA()
     }
   });
   ArduinoOTA.begin();
-  // Now that we've started in OTA mode, clear the flag in EEPROM so that we start up in ESPNOW mode the next time
+  // Now that we've started in OTA mode, set the EEPROM flag to MODE_OTA_END so that when we start up in ESPNOW mode the next time, we know we are coming out of OTA mode
   // This is irrespective of whether OTA setup completes successfully or not
-  EEPROM.write(sizeof(int),(byte)false);
+  // be aware dont set ota_mode to this future mode her, we're still in ota_mode = MODE_OTA_START
+  espnow_mode_t mode  = MODE_OTA_END;
+  EEPROM.write(eeprom_start_add,mode);
   EEPROM.commit();
+  EEPROM.get(eeprom_start_add,mode);
+  if(mode != MODE_OTA_END)
+  {
+    DPRINTFLN("OTA Flag write mismatch. written:%u , read back:%u",MODE_OTA_END,mode);
+  }
   DPRINTLN("OTA set up successfully");
 
 }
@@ -151,12 +175,17 @@ void setup() {
   #endif
   
   print_init_info();
+  // Set a custom MAC address for the device. This is helpful in cases where you want to replace the actual ESP device in future
+  // A custom MAC address will allow all sensors to continue working with the new device and you will not be required to update code on all devices
+  setCustomMAC(customMACAddress,true);
+  
   EEPROM.begin(EEPROM_SIZE);
-  ota_mode = EEPROM.get(sizeof(int),ota_mode);
-  DPRINTFLN("Starting up in %s mode",ota_mode?"OTA":"ESPNOW");
-  if(ota_mode)
-  {
+  ota_mode = EEPROM.get(eeprom_start_add,ota_mode);
+  DPRINTFLN("Starting up in %s mode,ota_mode:%d",ota_mode== MODE_OTA_START?"OTA":"ESPNOW",ota_mode);
+  if(ota_mode == MODE_OTA_START)
+{
     setup_OTA();
+    set_led(true);
   }
   else
   {
@@ -179,14 +208,12 @@ void setup() {
       peerInfo.encrypt = false;
     #endif
     refreshPeer(&peerInfo);
-    
-    touch_pad_t touchPin;
-    touchPin = esp_sleep_get_touchpad_wakeup_status();
+   
+   touchPin = esp_sleep_get_touchpad_wakeup_status();
     DPRINTFLN("TouchPin %u",touchPin);
     switch(touchPin)
     {
       case 0  : {    gpio_pin = 4;DPRINTLN("Touch detected on GPIO 4"); break;  }
-      case 1  : {    gpio_pin = 0;DPRINTLN("Touch detected on GPIO 0"); break;  }
       case 2  : {    gpio_pin = 2;DPRINTLN("Touch detected on GPIO 2"); break;  }
       case 3  : {    gpio_pin = 15;DPRINTLN("Touch detected on GPIO 15"); break;  }
       case 4  : {    gpio_pin = 13;DPRINTLN("Touch detected on GPIO 13"); break;  }
@@ -197,22 +224,11 @@ void setup() {
       case 9  : {    gpio_pin = 32;DPRINTLN("Touch detected on GPIO 32"); break;  }
       default : {    DPRINTLN("Not a pin wakeup, probably starting up"); break;  }
     }
-    DPRINTFLN("gpio_pin %u",gpio_pin);
+    //DPRINTFLN("gpio_pin %u",gpio_pin);
   }
   // set the mac address in the myData struct so that we wont need to populate it every time we send a message
   strcpy(myData.sender_mac,WiFi.macAddress().c_str());
 }
-
-void callback0(){}
-void callback1(){}
-void callback2(){}
-void callback3(){}
-void callback4(){}
-void callback5(){}
-void callback6(){}
-void callback7(){}
-void callback8() {}
-void callback9(){}
 
 /*
 * Puts the ESP into deep sleep with touch wakeup
@@ -220,21 +236,68 @@ void callback9(){}
 void go_to_sleep()
 {
   //Setup interrupt on Touch pins
-  // touchAttachInterrupt(TOUCHPIN0, callback0, THRESHOLD);
-  // touchAttachInterrupt(TOUCHPIN1, callback1, THRESHOLD);
-  // touchAttachInterrupt(TOUCHPIN2, callback2, THRESHOLD);
-  // touchAttachInterrupt(TOUCHPIN3, callback3, THRESHOLD);
-  // touchAttachInterrupt(TOUCHPIN4, callback4, THRESHOLD);
-  touchAttachInterrupt(TOUCHPIN5, callback5, THRESHOLD);
-  touchAttachInterrupt(TOUCHPIN6, callback6, THRESHOLD);
-  // touchAttachInterrupt(TOUCHPIN7, callback7, THRESHOLD);
-  // touchAttachInterrupt(TOUCHPIN8, callback8, THRESHOLD);
-  // touchAttachInterrupt(TOUCHPIN9, callback9, THRESHOLD);
-  esp_sleep_enable_touchpad_wakeup();
+  touchSleepWakeUpEnable(TOUCHPIN0, THRESHOLD);
+  touchSleepWakeUpEnable(TOUCHPIN2,THRESHOLD);
+  touchSleepWakeUpEnable(TOUCHPIN3, THRESHOLD);
+  touchSleepWakeUpEnable(TOUCHPIN4, THRESHOLD);
+  touchSleepWakeUpEnable(TOUCHPIN5, THRESHOLD);
+  touchSleepWakeUpEnable(TOUCHPIN6, THRESHOLD);
+  touchSleepWakeUpEnable(TOUCHPIN7, THRESHOLD);
+  touchSleepWakeUpEnable(TOUCHPIN8, THRESHOLD);
+  touchSleepWakeUpEnable(TOUCHPIN9, THRESHOLD);
+
   DPRINTFLN("Going to sleep, waiting for touch...");
   DFLUSH();
   esp_deep_sleep_start();
   DPRINTLN("In Deep sleep"); // This will never be printed
+
+}
+
+void map_pin_with_action(touch_pad_t pin , espnow_message &msg)
+{
+  switch(touchPin)
+  {
+    case 0  : {
+       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.study_light\"}");
+       strcpy(msg.chardata2,"");
+       break; }
+    case 2  : {
+       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.study_light\"}");
+       strcpy(msg.chardata2,"");
+       break; }
+    case 3  : {
+       strcpy(msg.chardata1,"fan|toggle|{\"entity_id\":\"fan.study_fan\"}");
+       strcpy(msg.chardata2,"");
+       break; }
+    case 4  : {
+       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.study_light\"}");
+       strcpy(msg.chardata2,"");
+       break; }
+    case 5  : {
+       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.study_light\"}");
+       strcpy(msg.chardata2,"");
+       break; }
+    case 6  : {
+       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.study_light\"}");
+       strcpy(msg.chardata2,"");
+       break; }
+    case 7  : {
+       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.study_light\"}");
+       strcpy(msg.chardata2,"");
+       break; }
+    case 8  : {
+       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.study_light\"}");
+       strcpy(msg.chardata2,"");
+       break; }
+    case 9  : {
+       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.study_light\"}");
+       strcpy(msg.chardata2,"");
+       break; }
+     default : { 
+       strcpy(msg.chardata1,"");
+       strcpy(msg.chardata2,"");
+              }
+  }
 
 }
 
@@ -244,11 +307,31 @@ void go_to_sleep()
 void send_message(msg_type_t msg_type, bool acknowledge = true)
 {
   myData.msg_type = msg_type;
-  if(gpio_pin >= 0 && gpio_pin <= 40)
+  if(msg_type != ESPNOW_OTA)
   {
-    myData.intvalue1 = gpio_pin;
+    if(touchPin >= 0 && touchPin <= TOUCH_PAD_MAX)
+    {
+      myData.intvalue1 = touchPin;
+    }
+    //Set other values to send
+    myData.floatvalue1 = 0;
+    myData.intvalue2 = 0;
+    map_pin_with_action(touchPin,myData);
   }
-  //Set other values to send
+  else
+  {
+    myData.intvalue1 = ota_mode; // ota mode
+    myData.intvalue2 = OTA_TIMEOUT; // ota timeout time in sec
+    myData.floatvalue1 = OTA_TIMEOUT - (millis()- start_time)/1000; // time remaining for ota mode in secs
+    strcpy(myData.chardata1,ESP_IP_ADDRESS.toString().c_str());
+    strcpy(myData.chardata2,"");
+  }
+  myData.intvalue3 = 0;
+  myData.intvalue4 = 0;
+  myData.floatvalue2 = 0;
+  myData.floatvalue3 = 0;
+  myData.floatvalue4 = 0;
+  myData.message_id = millis();//there is no use of message_id so using it to send the uptime
   // If devicename is not given then generate one from MAC address stripping off the colon
   #ifndef DEVICE_NAME
     String wifiMacString = WiFi.macAddress();
@@ -257,18 +340,8 @@ void send_message(msg_type_t msg_type, bool acknowledge = true)
   #else
     strcpy(myData.device_name,DEVICE_NAME);
   #endif
-  myData.intvalue2 = 0;
-  myData.intvalue3 = 0;
-  myData.intvalue4 = 0;
-  myData.floatvalue1 = 0;
-  myData.floatvalue2 = 0;
-  myData.floatvalue3 = 0;
-  myData.floatvalue4 = 0;
-  strcpy(myData.chardata1,"");
-  strcpy(myData.chardata2,"");
-  myData.message_id = millis();//there is no use of message_id so using it to send the uptime
-    
-  //int result = esp_now_send(gatewayAddress, (uint8_t *) &myData, sizeof(myData));
+
+  DPRINTFLN("sending message with size %d bytes, max allowed is 250 bytes",sizeof(myData));
   int result = sendESPnowMessage(&myData,gatewayAddress,acknowledge);
   if (result == 0) {
     DPRINTFLN("Msg Type: %d, delivered with success",myData.msg_type);}
@@ -301,12 +374,13 @@ void process_messages()
 {
   if(ota_msg)
   {
-    // write true in EEPROM and restart the ESP
-    EEPROM.write(sizeof(int),(byte)true);
+    // write MODE_OTA_START in EEPROM and restart the ESP
+    ota_mode  = MODE_OTA_START;
+    EEPROM.write(eeprom_start_add,ota_mode);
     EEPROM.commit();
-    //DPRINTFLN("OTA Flag read back from EEPROM %u",EEPROM.get(sizeof(int),ota_mode));
+    DPRINTFLN("OTA Flag read back from EEPROM %u",EEPROM.get(sizeof(int),ota_mode));
     send_message(ESPNOW_OTA,false);
-    DPRINTFLN("Going to restart the ESP for OTA mode...");
+    DPRINTLN("msg sent to Gateway to confirm receipt of OTA message. Going to restart the ESP for OTA mode...");
     DFLUSH();
     ESP.restart();
   }
@@ -333,21 +407,24 @@ void scan_for_messages()
 }
 
 void loop() {
-  if(ota_mode) 
+  if(ota_mode== MODE_OTA_START) 
   {
     ArduinoOTA.handle();
     // countdown to the max time you should remain in the OTA mode before going back to sleep
     if((millis()- start_time) > OTA_TIMEOUT*1000)
     {
-      set_led_off();
-      DPRINTLN("Timing out of OTA mode");
-      ota_mode = false; // not necessary but anyway
+      set_led(false);
+      DPRINTLN("No OTA file received, timing out of OTA mode");
+      ota_mode = MODE_NORMAL; // not necessary but anyway
       go_to_sleep();
     }
   }
   else 
   {
-    send_message(ESPNOW_SENSOR,true);
+    if(touchPin >= 0 && touchPin < TOUCH_PAD_MAX)
+    {
+      send_message(ESPNOW_COMMAND,true);
+    }
     scan_for_messages();
     if(!msgReceived) //no messages are received to process, turn off led and go to sleep
     {

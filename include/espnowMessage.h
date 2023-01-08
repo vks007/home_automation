@@ -5,14 +5,15 @@
 
 #define OTA_MSG "OTA" // ota message , if received triggers an OTA mode
 typedef enum {
-    ESPNOW_SENSOR         = 0,
-    ESPNOW_OTA        = 1
+    ESPNOW_SENSOR     = 0, // messages sent by sensor devices with their data
+    ESPNOW_OTA        = 1, // messages sent by any device on OTA state
+    ESPNOW_COMMAND    = 2  // messages sent by any device with action info in the message
 } msg_type_t;
 
 typedef enum {
     MODE_NORMAL           = 0,
-    MODE_OTA_START        = 1,
-    MODE_OTA_END          = 2
+    MODE_OTA_START        = 125, // to avoid junk values read back from EEPROM matching this value
+    MODE_OTA_END          = 126
 } espnow_mode_t;
 
 typedef struct espnow_device
@@ -20,6 +21,8 @@ typedef struct espnow_device
   uint8_t mac[6];
   bool ota_mode;
   volatile bool ota_done;
+  short duration;
+  short interval;
 }espnow_device;
 
 // Datatypes in Arduino : https://www.tutorialspoint.com/arduino/arduino_data_types.htm
@@ -39,8 +42,8 @@ typedef struct espnow_message{
   float floatvalue2;// float data
   float floatvalue3;// float data
   float floatvalue4;// float data
-  char chardata1[16]="";// any char data
-  char chardata2[16]="";// any char data
+  char chardata1[64]="";// any char data
+  char chardata2[64]="";// any char data
 }espnow_message;
 
 /*

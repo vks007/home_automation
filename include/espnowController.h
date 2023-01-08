@@ -345,12 +345,13 @@ bool sendESPnowMessage(espnow_message *myData,uint8_t peerAddress[], short retri
 }
 
 /*
-* sets the custom STA or Soft AP MAC address for an ESP , compatible with ESP8266/ESP32 , not tested for ESP32 yet, still to test
+* sets the custom STA or Soft AP MAC address for an ESP , compatible with ESP8266/ESP32
 * input param STA_MAC : bool , True for STA_MAC , false for Soft AP MAC
 * return type : bool , true if successfully set else false
 */
 bool setCustomMAC(uint8_t customMACAddress[6], bool STA_MAC)
 {
+  #if defined(ESP8266)
   uint8 mac_type;
   if(STA_MAC)
   {
@@ -359,8 +360,6 @@ bool setCustomMAC(uint8_t customMACAddress[6], bool STA_MAC)
   }
   else
     mac_type = SOFTAP_IF; // WiFi mode not necessary for this
-  
-  #if defined(ESP8266)
   if(wifi_set_macaddr(mac_type, &customMACAddress[0]))
     { 
       uint8_t macAddr[6];
@@ -370,8 +369,16 @@ bool setCustomMAC(uint8_t customMACAddress[6], bool STA_MAC)
       return true;
     }
   else
-    {DPRINT("Failed to set custom MAC address. Currenct MAC address is:"); DPRINTLN(WiFi.softAPmacAddress());}
+    {DPRINT("Failed to set custom MAC address. Current MAC address is:"); DPRINTLN(WiFi.softAPmacAddress());}
   #elif defined(ESP32)
+  wifi_interface_t mac_type;
+  if(STA_MAC)
+  {
+    mac_type = WIFI_IF_STA;
+    WiFi.mode(WIFI_STA);// This has to be set before you attempt to change the MAC address in station mode, else it fails
+  }
+  else
+    mac_type = WIFI_IF_AP; // WiFi mode not necessary for this
   if(esp_wifi_set_mac(mac_type, &customMACAddress[0]))
     { 
       DPRINT("Successfully set a custom MAC address as:");

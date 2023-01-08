@@ -13,14 +13,13 @@
   #define STATUS_LED              IN_USE // If Status LED is used or not, affects battery
   #define OTA                     IN_USE // If OTA mode is in use or not
   #define DEVICE_NAME             "touch_sensor1" //max 15 characters without spaces
-  uint8_t gatewayAddress[] =      GATEWAY_TEST_AP_MAC; //comes from secrets.h
   #define WiFi_SSID               primary_ssid //from secrets.h
   #define WiFi_SSID_PSWD          primary_ssid_pswd // used only for OTA updates else this is not used , from secrets.h
   #define ESP_IP_ADDRESS          IP_espnow_sensor //from secrets.h\static_ipaddress.h
-  #define THRESHOLD               40 // Threshold for touch pin sensitivity , greater the value, more the sensitivity
+  #define THRESHOLD               75 // Threshold for touch pin sensitivity , greater the value, more the sensitivity
   #define TOUCHPIN0               T0 // GPIO4
-  #define TOUCHPIN1               T1 // GPIO0
-  #define TOUCHPIN2               T2 // GPIO2
+//  #define TOUCHPIN1               T1 // GPIO0 // This does not work on ESPDev module
+  #define TOUCHPIN2               T2 // GPIO2 // this does not work on my ESPDev module
   #define TOUCHPIN3               T3 // GPIO15
   #define TOUCHPIN4               T4 // GPIO13
   #define TOUCHPIN5               T5 // GPIO12 // this works with ESP32 CAM , other touch pins are not usable on it
@@ -28,11 +27,14 @@
   #define TOUCHPIN7               T7 // GPIO27
   #define TOUCHPIN8               T8 // GPIO33
   #define TOUCHPIN9               T9 // GPIO32
-  #define LED_GPIO                2
+  #define LED_GPIO                21
   #define LED_INVERTED            false // If LED is Active HIGH , define as false , if Active LOW , define as true
   #define LED_ON_DURATION         0 // Duration in millisecs for which Status LED is ON. If 0 then it will be ON for the lenght of ESP wakeup. 
                                   // Irrespective of the value specified , it will not be ON for a time less than ESP wake time , ~ 90ms
                                   // Suggest to keep this at 0 to save battery or even dont use LED 
+  uint8_t customMACAddress[] =    ESP_TOUCH_AP_MAC; // from secrets.h . Prefer defining a custom MAC instead of actual device MAC so that the MAC doesnt change with device
+  uint8_t gatewayAddress[] =      GATEWAY_FF_AP_MAC; //comes from secrets.h
+
 #else
   #error "Device type not found. Have you passed DEVICE id in platform.ini as build flag. See Config.h for all DEVICES"
 #endif

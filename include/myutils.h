@@ -208,6 +208,62 @@ bool MAC_to_array(const char *hex, uint8_t *buf, size_t len)
 	return true;
 }
 
+//Checks if a string is positive numeric - only 0-9
+bool isNumeric(String str)
+{
+  for(unsigned short i=0;i<str.length();i++)
+    if(!isDigit(str.charAt(i)))
+      return false;
+  return true;
+}
+
+//Checks if a string is positive or negative numeric -> 0-9 along with negative sign
+bool isSignedNumeric(String str)
+{
+  char ch='\0';
+  for(unsigned short i=0;i<str.length();i++)
+  {
+    ch = str.charAt(i);
+    if(ch== 45 && i != 0)//If we have a minus sign but it is not at the first position then it is not a valid numeric
+      return false;
+    //0-9 is ascii value 48-57 , minus sign is ascii value 45
+    if(( ch >= 48 && ch <= 57) || ch == 45)
+      continue;
+    else
+      {return false;}
+  }
+  return true;
+
+/*
+  if(str.length()> 0 && str.charAt(0) == '-')
+    str.replace('-','');
+  DPRINTLN("str.length2=" + String(str.length()));
+  for(unsigned short i=0;i<str.length();i++)
+    if(!isDigit(str.charAt(i)))
+      {DPRINT("false");
+      return false;}
+    else
+      {DPRINT("true");}
+*/
+}
+
+//Formats time passed in seconds into hour:minute:second format and returns as string
+String formatTime(unsigned long sec)
+{
+  unsigned int hr=0,mn=0;
+  if(sec >= 60)
+  {
+    mn = sec/60;
+    sec = sec - mn*60;
+    if(mn >= 60)
+    {
+      hr = mn/60;
+      mn = mn - hr*60;
+    }
+  }
+  return String(hr) + ":" + String(mn) + ":" + String(sec);
+}
+
 #endif
 
 

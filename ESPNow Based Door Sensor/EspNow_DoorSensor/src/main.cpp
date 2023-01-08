@@ -9,6 +9,7 @@
  * The entire sketch from start to finish takes less than 90ms to execute and power down
  * TO DO :
  * - have multiple slaves to which a message can be tranmitted in the order of preference
+ * - implement OTA update via webpage, tried ElegantAsyncOTA (it crashes) and WebOTA (webpage doesnt open up) libraries but both didnt work. so will have to implement myself
  */
 
 /*
@@ -23,7 +24,7 @@
 */
 // ************ HASH DEFINES *******************
 #define MSG_WAIT_TIMEOUT 30 // time in ms to wait for receiving any incoming messages to this ESP , typically 10-40 ms
-#define OTA_TIMEOUT 30 // time in seconds beyond which to come out of OTA mode
+#define OTA_TIMEOUT 180 // time in seconds beyond which to come out of OTA mode
 #define VERSION "2.4"
 //Types of messages decoded via the signal pins
 #define SENSOR_NONE 0
@@ -99,7 +100,7 @@ void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
     DPRINTF("Processing msg:%lu,%u,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.msg_type,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
   }
   else // ignore any messages if we are already in OTA mode
-    DPRINTF("Ignoring msg:%lu,%u,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
+    DPRINTF("Ignoring msg:%lu,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
 };
 
 void printInitInfo()
@@ -174,7 +175,9 @@ void setup_OTA()
   EEPROM.commit();
   EEPROM.get(eeprom_start_add,mode);
   if(mode != MODE_OTA_END)
+  {
     DPRINTFLN("OTA Flag write mismatch. written:%u , read back:%u",MODE_OTA_END,mode);
+  }
   DPRINTLN("OTA set up successfully");
 
 }
@@ -314,7 +317,7 @@ void setup() {
   // Also used for storing OTA flag
   EEPROM.begin(EEPROM_SIZE);
   ota_mode = EEPROM.get(eeprom_start_add,ota_mode);
-  DPRINTFLN("Starting up in %s mode",ota_mode== MODE_OTA_START?"OTA":"ESPNOW",ota_mode);
+  DPRINTFLN("Starting up in %s mode",ota_mode== MODE_OTA_START?"OTA":"ESPNOW");
   if(ota_mode == MODE_OTA_START)
   {
     setup_OTA();
@@ -359,10 +362,13 @@ void loop() {
   }
   else
   {
-    //if(!msgSent)
+    if(!msgSent)
     {
       send_message(ESPNOW_SENSOR,true);
-      msgSent = true; //once sent set it to true, this will prevent any other messagebeing sent as it takes some finitie time to kill power to the ESP
+      #if !USING(TEST_MODE) // If not testing mode only then set the flag as below
+        msgSent = true; //once a message is sent, set it to true, this will prevent any other message being sent as it takes some finite time to kill power to the ESP
+                        // hence loop() keeps executing and sending messages
+      #endif // else dont set the flag and the loop will keep sending the message
     }
     // I could keep the scan_for_messages() in the if block above so it executes only once but no harm in executing it repeatedly so letting it there
     // scan for messages sent to this ESP via espnow , this could be any message, one being OTA type message
