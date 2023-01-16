@@ -253,44 +253,58 @@ void go_to_sleep()
 
 }
 
-void map_pin_with_action(touch_pad_t pin , espnow_message &msg)
+/*
+* Maps the action each button should do when pressed. The button press ultimately call a Home Assistant service REST API
+* whose format is /api/services/<domain>/<service> and additonal data is passed as json to it in chardata1 and chardata2
+* This function maps the domain , service and additional data as json string - each seperated by the pipe character: |
+* On the gateway the string is parsed on pipe and the 3 values obtained. 
+* As each chardata can hold only 64 chars, if its beyond the same, break that into 2 and put them in chardata1 & chardata2
+* LIMITATION: Overall limit for passing this string is 128 chars. anything beyond that will be truncated / lead to corrupt memory
+* Touch pad pins are numbered 0 - 9 of which I dont use some
+* Button index layout is as under
+* 0 1 2 
+* 3 4 5
+* 6 7 8
+* Read more about HA REST API services here : https://developers.home-assistant.io/docs/api/rest/
+*/
+void map_pin_with_action(int pin , espnow_message &msg)
 {
-  switch(touchPin)
+  switch(pin)
   {
     case 0  : {
-       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.study_light\"}");
+       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.lumos\"}");
        strcpy(msg.chardata2,"");
+       break; }
+    case 1  : {
+       strcpy(msg.chardata1,"light|turn_on|{\"entity_id\":\"light.lumos\",\"brightness_step_pct\"");
+       strcpy(msg.chardata2,": 25}");
        break; }
     case 2  : {
-       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.study_light\"}");
-       strcpy(msg.chardata2,"");
+       strcpy(msg.chardata1,"light|turn_on|{\"entity_id\":\"light.lumos\",\"brightness_step_pct\"");
+       strcpy(msg.chardata2,": -25}");
        break; }
     case 3  : {
-       strcpy(msg.chardata1,"fan|toggle|{\"entity_id\":\"fan.study_fan\"}");
+       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.thanos\"}");
        strcpy(msg.chardata2,"");
        break; }
     case 4  : {
-       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.study_light\"}");
-       strcpy(msg.chardata2,"");
+       strcpy(msg.chardata1,"light|turn_on|{\"entity_id\":\"light.thanos\",\"brightness_step_pct\"");
+       strcpy(msg.chardata2,": 25}");
        break; }
     case 5  : {
-       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.study_light\"}");
-       strcpy(msg.chardata2,"");
+       strcpy(msg.chardata1,"light|turn_on|{\"entity_id\":\"light.thanos\",\"brightness_step_pct\"");
+       strcpy(msg.chardata2,": -25}");
        break; }
     case 6  : {
-       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.study_light\"}");
+       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.temple_light\"}");
        strcpy(msg.chardata2,"");
        break; }
     case 7  : {
-       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.study_light\"}");
+       strcpy(msg.chardata1,"light|turn_on|{\"entity_id\":\"light.temple_light\"}");
        strcpy(msg.chardata2,"");
        break; }
     case 8  : {
-       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.study_light\"}");
-       strcpy(msg.chardata2,"");
-       break; }
-    case 9  : {
-       strcpy(msg.chardata1,"light|toggle|{\"entity_id\":\"light.study_light\"}");
+       strcpy(msg.chardata1,"light|turn_off|{\"entity_id\":\"light.temple_light\"}");
        strcpy(msg.chardata2,"");
        break; }
      default : { 
@@ -299,6 +313,41 @@ void map_pin_with_action(touch_pad_t pin , espnow_message &msg)
               }
   }
 
+}
+
+
+/*
+* Returns the mapping of touch pad with the button ID. Buttons are names in rows & columns like :
+* Touch pad pins are numbered 0 - 9 of which I dont use some
+* Button index layout is as under
+* 0 1 2 
+* 3 4 5
+* 6 7 8
+*/
+int button_index(touch_pad_t touch_pin)
+{
+  switch(touch_pin){
+  case 2:
+    return 0;
+  case 5:
+    return 1;
+  case 8:
+    return 2;
+  case 3:
+    return 3;
+  case 6:
+    return 4;
+  case 7:
+    return 5;
+  case 4:
+    return 6;
+  case 9:
+    return 7;
+  case 0:
+    return 8;
+  default:
+    return -1;
+  }
 }
 
 /*
@@ -316,7 +365,7 @@ void send_message(msg_type_t msg_type, bool acknowledge = true)
     //Set other values to send
     myData.floatvalue1 = 0;
     myData.intvalue2 = 0;
-    map_pin_with_action(touchPin,myData);
+    map_pin_with_action(button_index(touchPin),myData);
   }
   else
   {
