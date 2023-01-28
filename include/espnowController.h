@@ -47,7 +47,7 @@ TO DO list:
 #endif
 
 // ************ GLOBAL OBJECTS/VARIABLES *******************
-uint8_t slave_channel = 0;//stores the channel of the slave by scanning the SSID the slave is on.
+
 bool channelRefreshed = false;//tracks the status of the change in wifi channel , true -> wifi channel has been refreshed
 volatile uint8_t deliverySuccess = 9; //0 means success , non zero are error codes
 volatile bool bResultReady = false;
@@ -114,6 +114,22 @@ uint8_t getWiFiChannel()
   #endif
 }
 
+void set_wifi_channel(short channel)
+{
+#if defined(ESP8266)
+  wifi_promiscuous_enable(true);
+  wifi_set_channel(channel);
+  wifi_promiscuous_enable(false);
+#elif defined(ESP32)
+  esp_wifi_set_promiscuous(true);
+  wifi_second_chan_t second;
+  esp_wifi_set_channel(channel,second);
+  esp_wifi_set_promiscuous(false);
+  WiFi.disconnect();
+#endif
+
+}
+
 #if USING(EEPROM_STORE)
 /*
 * Sets the right channel for WiFi on the ESP. It finds the channel of the SSID passed to it and then changes the channel of the ESP to match the same
@@ -125,6 +141,7 @@ uint8_t getWiFiChannel()
 */
 void setSSIDChannel(const char ssid[MAX_SSID], bool forceChannelRefresh = false, bool restartOnError= false)
 {
+  uint8_t slave_channel = 0;//stores the channel of the slave by scanning the SSID the slave is on.
   DPRINTFLN("Current channel:%d",getWiFiChannel());
   if(slave_channel == 0) // we're starting up , get the channel from the EEPROM
   {
@@ -161,29 +178,17 @@ void setSSIDChannel(const char ssid[MAX_SSID], bool forceChannelRefresh = false,
   
   if((getWiFiChannel() != slave_channel) && slave_channel !=0)// no use changing channel if we got 0, it can happen if you dont find the SSID
   {
-    #if defined(ESP8266)
-      wifi_promiscuous_enable(true);
-      wifi_set_channel(slave_channel);
-      wifi_promiscuous_enable(false);
-    #elif defined(ESP32)
-      //DPRINTLN("Going to set the new channel");
-      esp_wifi_set_promiscuous(true);
-      wifi_second_chan_t second;
-      esp_wifi_set_channel(slave_channel,second);
-      esp_wifi_set_promiscuous(false);
-      WiFi.disconnect();
-    #endif
-
+    set_wifi_channel(slave_channel);
     delay(10);// not sure why did I keep this delay, may remove it later
-  }
-  // Check what channel have we got
-  uint8_t ch = getWiFiChannel();
-  DPRINTFLN("New WiFi channel set as:%d",ch);
-  //strange behavior : If I define ch as byte and make the comparison below , the ESP resets due to WDT and then hangs
-  if(ch == 0 && restartOnError)
-  {
-    DPRINTLN("Could not set WiFi Channel properly, restarting");
-    ESP.restart();
+    // Check what channel have we got
+    uint8_t ch = getWiFiChannel();
+    DPRINTFLN("New WiFi channel set as:%d",ch);
+    //strange behavior : If I define ch as byte and make the comparison below , the ESP resets due to WDT and then hangs
+    if(ch == 0 && restartOnError)
+    {
+      DPRINTLN("Could not set WiFi Channel properly, restarting");
+      ESP.restart();
+    }
   }
   //  WiFi.printDiag(Serial);
 }
@@ -194,12 +199,13 @@ void setSSIDChannel(const char ssid[MAX_SSID], bool forceChannelRefresh = false,
 * param - ssid - SSID for which the channel has to be matched
 * param - esp_now_role - only applicable for ESP8266 - role of the device , NULL for ESP32
 * param - restartOnError - bool , to restart ESP if we we're not able to set the channel properly
-* Params: forceChannelRefresh : true forces the channel to be scanned again , false: tries to read the channel from RTC memory, if it fails then scans afresh
+* param: forceChannelRefresh : true forces the channel to be scanned again , false: tries to read the channel from RTC memory, if it fails then scans afresh
+* param: wifi_mode : WiFi mode to be set , should be WIFI_STA - for sensors , WIFI_AP_STA for Receivers
 */
-void initilizeESP(const char ssid[MAX_SSID],esp_now_role role, bool forceChannelRefresh = false, bool restartOnError= false)
+void initilizeESP(const char ssid[MAX_SSID],esp_now_role role, bool forceChannelRefresh = false, bool restartOnError= false, WiFiMode wifi_mode= WIFI_STA)
 {
   // Set device as a Wi-Fi Station and set channel
-  WiFi.mode(WIFI_STA); 
+  WiFi.mode(wifi_mode); 
   setSSIDChannel(ssid,forceChannelRefresh,restartOnError);
   
   // if we're forcing an init again, deinit first
@@ -213,6 +219,37 @@ void initilizeESP(const char ssid[MAX_SSID],esp_now_role role, bool forceChannel
   esp_now_set_self_role(role);
   #endif
 }
+#else
+/*
+* calls all statements to initialize the esp device for espnow messages
+* It sets STA mode, sets the channel for wifi/espnow, sets ESP role for ESP8266
+* param: channel : the channel number to be set , can be 1-14 only
+* param: wifi_mode : WiFi mode to be set , should be WIFI_STA - for sensors , WIFI_AP_STA for Receivers
+*/
+void initilizeESP(short channel,esp_now_role role, WiFiMode wifi_mode)
+{
+  if(channel < 1 || channel > 14)
+  {
+    DPRINTLN("Error: Channel No can only be within the range 1-14");
+    return;
+  }
+  // Set device as a Wi-Fi Station and set channel
+  WiFi.mode(wifi_mode);
+  set_wifi_channel(channel);
+  DPRINTFLN("WiFi Channel set to %d. Ensure Rx & Tx are on the same channel.",WiFi.channel());
+  
+  // if we're forcing an init again, deinit first
+  esp_now_deinit();
+  //Init ESP-NOW
+  if (esp_now_init() != 0) {
+    DPRINTLN("Error initializing ESP-NOW");
+    return;
+  }
+  #if defined(ESP8266)
+  esp_now_set_self_role(role);
+  #endif
+}
+
 #endif
 
 #if defined(ESP8266)
@@ -236,13 +273,14 @@ bool refreshPeer(uint8_t peerAddress[],const uint8_t key[],esp_now_role role)
 {
     delete_peer(peerAddress);//delete peer if it is present
     //Add peer , Note: There is no method in ESP8266 to add a peer by passing esp_now_peer_info_t object unlike ESP32
-    if (esp_now_add_peer((uint8_t*)peerAddress, role, slave_channel,(uint8_t*) key, key == NULL ? 0 : KEY_LEN) != 0){
-        DPRINTFLN("Failed to add peer on channel:%u",slave_channel);
+    uint8_t ch = WiFi.channel();
+    if (esp_now_add_peer((uint8_t*)peerAddress, role, ch,(uint8_t*) key, key == NULL ? 0 : KEY_LEN) != 0){
+        DPRINTFLN("Failed to add peer on channel:%u",ch);
         return false;
     }
     uint8_t *peerCheck = esp_now_fetch_peer(true);
     if (peerCheck != nullptr)
-      {DPRINTF("Added peer: %02X:%02X:%02X:%02X:%02X:%02X on channel:%u",peerCheck[0],peerCheck[1],peerCheck[2],peerCheck[3],peerCheck[4],peerCheck[5],slave_channel);
+      {DPRINTF("Added peer: %02X:%02X:%02X:%02X:%02X:%02X on channel:%u",peerCheck[0],peerCheck[1],peerCheck[2],peerCheck[3],peerCheck[4],peerCheck[5],ch);
         DPRINTFLN(" with role:%u",role);
       }
     else
