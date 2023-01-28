@@ -21,27 +21,33 @@
 #include <espnow.h>
 #include "espnowMessage.h" // for struct of espnow message
 #include "myutils.h"
+#include <averager.h>
 #if USING(EEPROM_STORE)
 #define EEPROM_SIZE 16 // number of bytes to be allocated to EEPROM
 #include <EEPROM.h> // to store WiFi channel number to EEPROM
 #endif
 
 // ************ HASH DEFINES *******************
+#define RESISTOR_CONST 4.59 // constant obtained by Resistor divider network. Vbat----R1---R2---GND . Const = (R1+R2)/R2
+        // I have used R1 = 968K , R2=265K. calc factor comes to 4.61 but actual measurements gave me a more precise value of 4.59
 // ************ HASH DEFINES *******************
 
 // ************ GLOBAL OBJECTS/VARIABLES *******************
-const char* ssid = WiFi_SSID; // comes from config.h
-const char* password = WiFi_SSID_PSWD; // comes from config.h
+#if USING(EEPROM_STORE)
+  const char* ssid = WiFi_SSID; // comes from config.h
+#endif
+//const char* password = WiFi_SSID_PSWD; // comes from config.h
+const uint64_t sleep_time = SLEEP_DURATION * 1e6; // sleep time in uS for the ESP in between readings
 espnow_message myData;
 char device_id[13];
 #if USING(SECURITY)
 uint8_t kok[16]= PMK_KEY_STR;//comes from secrets.h
 uint8_t key[16] = LMK_KEY_STR;// comes from secrets.h
 #endif
-unsigned long lastDebounceTime = 0;  // the last time the output pin toggled
-unsigned long debounceDelay = 500;    // the debounce time;
-volatile bool button_pressed = false;
-bool button_state = false;
+volatile bool waiting_for_msg_ack = false; // flag to indicate when we've sent the message and are waiting for its acknowledgment
+short msg_ack_timeout = 10; // timeout in ms to wait for msg acknowlegment
+ulong msg_sent_time = 0; // keeps the time as millis() on when the message was sent
+volatile bool go_to_sleep = false;
 // ************ GLOBAL OBJECTS/VARIABLES *******************
 // need to include this file after ssid variable as I am using ssid inside espcontroller, not a good design but will sort this out later
 #include "espnowController.h" //defines all utility functions for sending espnow messages from a controller
@@ -58,6 +64,16 @@ esp_now_send_cb_t OnDataSent([](uint8_t *mac_addr, uint8_t status) {
   DPRINT("OnDataSent:Last Packet delivery status:\t");
   DPRINTLN(status == 0 ? "Success" : "Fail");
   bResultReady = true;
+  if (status == 0){
+    DPRINTLN("Delivery success");
+    //statusLED.blinkNumberOfTimes(500, 500, 1);
+  }
+  else{
+    DPRINTFLN("Delivery fail:%d",status);
+    //statusLED.blinkNumberOfTimes(500, 500, 3);
+  }
+  go_to_sleep = true;
+  // BEAWARE , DONT USE ANY delay() statement on this function else the ESP will crash
 });
 
 /*
@@ -78,17 +94,8 @@ void printInitInfo()
     DPRINTLN("Security OFF");
   #endif
   String wifiMacString = WiFi.macAddress();
-  // wifiMacString.replace(":","");
-  // snprintf(device_id, 13, "%s", wifiMacString.c_str());
-  // strcpy(device_id,wifiMacString.c_str());
-  // DPRINTF("deviceid:%s\n",device_id);
   DPRINTFLN("This device's MAC add: %s",wifiMacString.c_str());
 
-}
-
-void ICACHE_RAM_ATTR sensor_changed() {
-  if(!button_pressed)
-    button_pressed = true;
 }
 
 void setup() {
@@ -97,13 +104,17 @@ void setup() {
   DPRINTLN();
   printInitInfo();
   pinMode(SENSOR_PIN,INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(SENSOR_PIN), sensor_changed, FALLING);
 
-  //Initialize EEPROM , this is used to store the channel no for espnow in the memory, only stored when it changes which is rare
-  EEPROM.begin(EEPROM_SIZE);// size of the EEPROM to be allocated, 16 is the minimum
 
   DPRINTLN("initializing espnow");
-  initilizeESP(ssid,MY_ROLE);
+//  initilizeESP(ssid,MY_ROLE);
+  #if USING(EEPROM_STORE)
+    //Initialize EEPROM , this is used to store the channel no for espnow in the memory, only stored when it changes which is rare
+    EEPROM.begin(EEPROM_SIZE);// size of the EEPROM to be allocated, 16 is the minimum
+    initilizeESP(ssid,MY_ROLE);
+  #else
+    initilizeESP(DEFAULT_CHANNEL,MY_ROLE,WIFI_STA);
+  #endif
 
   #if(USING(SECURITY))
     esp_now_set_kok(kok, 16);
@@ -122,11 +133,24 @@ void setup() {
 
 bool sendMessage()
 {
-    //button_state = !button_state;
-    delay(10);
-    button_state = digitalRead(SENSOR_PIN);
-    myData.intvalue1 = button_state;
+    myData.intvalue1 = digitalRead(SENSOR_PIN);
     DPRINTFLN("sensor value: %d",myData.intvalue1);
+
+    //measure battery voltage on ADC pin , average it over some readings
+    // NOTE: Calling analogRead() too frequently causes WiFi to stop working. When WiFi is under operation, 
+    // analogRead() result may be cached for at least 5ms between effective calls. Ref: https://arduino-esp8266.readthedocs.io/en/latest/reference.html#analog-input
+    averager<int> avg_batt_volt;
+    for(short i=0;i<3;i++)
+    {
+      avg_batt_volt.append(analogRead(A0));
+      delay(10);
+    }
+
+    short analog_value = avg_batt_volt.getAverage();
+    float batt_level = (analog_value/1023.0)* RESISTOR_CONST;
+    myData.floatvalue1 = batt_level;
+    DPRINT("Battery:");DPRINTLN(myData.floatvalue1);
+    myData.intvalue2 = analog_value; //just for debugging purposes
 
     //Set other values to send
     // If devicename is not given then generate one from MAC address stripping off the colon
@@ -137,40 +161,42 @@ bool sendMessage()
     #else
       strcpy(myData.device_name,DEVICE_NAME);
     #endif
-    myData.intvalue2 = 0;
     myData.intvalue3 = 0;
     myData.intvalue4 = 0;
-    myData.floatvalue1 = 0;
     myData.floatvalue2 = 0;
     myData.floatvalue3 = 0;
     myData.floatvalue4 = 0;
     strcpy(myData.chardata1,"");
     strcpy(myData.chardata2,"");
-    myData.message_id = millis();//there is no use of message_id so using it to send the uptime
+    myData.message_id = secureRandom(1000); // get a random value between 0 - 1000
 
     bool result = sendESPnowMessage(&myData,gatewayAddress,1,true);
-    if (result == 0) 
-      {DPRINTLN("Delivered with success");}
-    else 
-      {DPRINTLN("Message not delivered");}
-    
+    msg_sent_time = millis();
+    DPRINTFLN("msg_sent_time:%l",msg_sent_time);
+    DFLUSH();
+    waiting_for_msg_ack = result == 0?true:false;
     return result;
 }
 
 void loop() {
-    
-  if(button_pressed)
+  if(!waiting_for_msg_ack)
   {
-    DPRINTLN("button pressed");
-    if ((millis() - lastDebounceTime) > debounceDelay) 
+    if(sendMessage() != 0)
     {
-      lastDebounceTime = millis();
-      sendMessage();
+      // we failed to send the msg successfully, sleep and try again on wakeup
+        go_to_sleep = true;
     }
-    // else
-    //   DPRINTLN("debouncing ignore...");
-    button_pressed = false;
   }
-  
+  if((millis() - msg_sent_time) > msg_ack_timeout)
+  {
+    //we sent the message but havent got the ack in alloted time, go to deep sleep
+    go_to_sleep = true;
+  }
+  if(go_to_sleep = true)
+  {
+    DPRINTFLN("Entering deep sleep for %d secs",SLEEP_DURATION);
+    DFLUSH();
+    ESP.deepSleep(sleep_time);
+  }
 
 }
