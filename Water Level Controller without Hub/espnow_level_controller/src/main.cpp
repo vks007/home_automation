@@ -21,7 +21,7 @@
 #include <ArduinoQueue.h> // provide Queue management
 #include "espnowMessage.h" // for struct of espnow message
 #include "myutils.h" // provides some uitlity functions
-#include "espwatchdog.h" // provides capability ot reset the ESP in case it becomes unresponsive
+#include "Debounce.h"
 #include <ezLED.h> // provides non blocking blinking of a LED 
 // I am using a local copy of this library instead from the std library repo as that has an error in cpp file.
 // The author has defined all functions which take a default argumnent again in the cpp file whereas the default argument should only be 
@@ -35,10 +35,9 @@ const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 
 #ifndef ESP_OK
   #define ESP_OK 0 // This is defined for ESP32 but not for ESP8266 , so define it
 #endif
-// API_TIMEOUT is used to determine how long to wait for MQTT connection before restarting the ESP
-#define API_TIMEOUT 300 // time in sec to wait for a new message from sensor, beyond which it restarts
 #define QUEUE_LENGTH 50 // max no of messages the ESP should queue up before replacing them, limited by amount of free memory
 #define HEALTH_INTERVAL 15e3 // interval is millisecs to publish health message for the gateway
+#define DEBOUNCE_INTERVAL 500 // button bounce interval in ms
 // ************ HASH DEFINES *******************
 #include "espnowController.h" //defines all utility functions for sending espnow messages from a controller
 
@@ -48,13 +47,15 @@ const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 
 #endif
 // const char* password = WiFi_SSID_PSWD; // comes from config.h
 long last_time = 0; // last time when health check was published
+bool start_stop_pressed = false; // flag to keep track if start stop button was pressed
+long lastMillis = 0; // time when last button was pressed , for debouncing
 extern "C"
 { 
   #include <lwip/icmp.h> // needed for icmp packet definitions , not sure what was this?
 }
 ArduinoQueue<espnow_message> structQueue(QUEUE_LENGTH);
 ezLED  statusLED(STATUS_LED,CTRL_CATHODE);
-watchDog wd = watchDog(API_TIMEOUT); // monitors the MQTT connection, if it is disconnected beyond API_TIMEOUT , it restarts ESP
+ezLED  sumpLED(SUMP_EMPTY_LED,CTRL_CATHODE);
 //List of controllers(sensors) who will send messages to this receiver
 uint8_t controller_mac[][6] = CONTROLLERS; //from secrets.h
 /* example entry : 
@@ -80,10 +81,9 @@ uint8_t key[16] = LMK_KEY_STR;// comes from secrets.h
 espnow_message myData;
 unsigned long start_time;
 espnow_device esp_ota_device;
+Debounce sump_button(SUMP_PIN, 80, true); // SUMP_PIN is the pin, 80 is the delay in ms, true for INPUT_PULLUP.
 // ************ GLOBAL OBJECTS/VARIABLES *******************
 #include "espnowController.h" //defines all utility functions for sending espnow messages from a controller
-
-
 
 /*
  * Callback when data is sent , It sets the bResultReady flag to true on successful delivery of message
@@ -103,14 +103,16 @@ void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
   espnow_message msg;
   memcpy(&msg, incomingData, sizeof(msg));
   DPRINTF("OnDataRecv:%lu,%d,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.msg_type,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
-  
-    if(!structQueue.isFull())
-      structQueue.enqueue(msg);
-    else
-      DPRINTLN("Queue Full");
+  if(!structQueue.isFull())
+    structQueue.enqueue(msg);
+  else
+    DPRINTLN("Queue Full");
 };
 
 
+/*
+ * Prints initial info about the device and other important parameters
+ */
 void printInitInfo()
 {
   DPRINTLN("");
@@ -123,16 +125,22 @@ void printInitInfo()
 
 }
 
+/*
+ * ISR called when the state of the start stop button changes
+ */
+void IRAM_ATTR ISR_start_stop() {
+  if((millis() - lastMillis) >= DEBOUNCE_INTERVAL) {
+    start_stop_pressed = true;
+    lastMillis = millis();
+  }
+}
+
 
 /*
- * Initializes the ESP with espnow and WiFi client , OTA etc
+ * Initializes the ESP with espnow 
  */
 void setup() {
-  // Initialize Serial Monitor , if we're usng pin 3 on ESP8266 for PIR then initialize Serial as Tx only , disable Rx
-  // ATTENTION : this is not working as inteded as PIR still holds Rx as LOW while startup and so the ESP doesnt boot
-  // As a temp solution , dont turn ON Serial if you're using Rx as PIR PIN
   {DBEGIN(115200);}
-
   printInitInfo();
 
   // Set a custom MAC address for the device. This is helpful in cases where you want to replace the actual ESP device in future
@@ -143,8 +151,10 @@ void setup() {
   #endif
 
   pinMode(STATUS_LED,OUTPUT);
+  pinMode(SUMP_EMPTY_LED,OUTPUT);
   pinMode(MOTOR_PIN,OUTPUT);
-
+  pinMode(START_STOP_PIN,INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(START_STOP_PIN),ISR_start_stop,CHANGE);
   String device_name = DEVICE_NAME;
   device_name.replace("_","-");//hostname dont allow underscores or spaces
   WiFi.hostname(device_name.c_str());// Set Hostname.
@@ -160,14 +170,6 @@ void setup() {
     initilizeESP(DEFAULT_CHANNEL,MY_ROLE,WIFI_AP_STA);
   #endif
 
-  //Init ESP-NOW
-  // if (esp_now_init() != ESP_OK) {
-  //   DPRINTLN("Error initializing ESP-NOW");
-  //   return;
-  // }
-  
-  // esp_now_set_self_role(MY_ROLE);
-  
   #if USING(SECURITY)
   // Setting the PMK key
   esp_now_set_kok(kok, KEY_LEN);
@@ -187,56 +189,130 @@ void setup() {
   statusLED.turnOFF();
 }
 
+/*
+ * turns the motor ON/OFF after checking the relavnt conditions
+ */
+void set_motor_state(bool turn_on)
+{
+  if(turn_on)  
+  {
+    if(digitalRead(MOTOR_PIN))
+      return; //motor is already ON, nothing to do
+    // Turn ON motor only if sump is filled
+    if(sump_button.read())
+    {
+      digitalWrite(MOTOR_PIN,HIGH);
+      DPRINTLN("Turning motor ON");
+    }
+    else
+      DPRINTLN("Ignoring motor ON command as SUMP is empty");
+  }
+  else
+  {
+    if(digitalRead(MOTOR_PIN)) // turn OFF motor only if it is ON
+    {
+      digitalWrite(MOTOR_PIN,LOW);
+      DPRINTLN("Turning motor OFF");
+    }
+  }
+}
+
+/*
+ * Proceses the message, in this case the message will either turn the motor ON/OFF or leave it as it is
+ */
 bool processMessage(espnow_message msg)
 {
-  if(msg.intvalue1 == 1) // sensor indicates the tank is full , turn OFF motor
+  if(msg.intvalue1 == 0) // sensor indicates the tank is full , turn OFF motor
   {
-    digitalWrite(MOTOR_PIN,LOW);
-    DPRINTLN("Turning motor OFF");
+    set_motor_state(false);
   }
-  else // tank is empty , turn ON motor
+  else // tank is empty , turn ON motor is sump is filled
   {
-    digitalWrite(MOTOR_PIN,HIGH);
-    DPRINTLN("Turning motor ON");
+    set_motor_state(true);
   }
   return true;
 }
 
+
 /*
- * runs the loop to check for incoming messages in the queue, picks them up and posts them to MQTT
+ * monitors the sump status, if it is empty then raises an alarm by blinking LED
+ */
+void monitor_sump()
+{
+  if(!sump_button.read())
+  {
+    // raise alarm , sump is empty
+    if(sumpLED.getState() != LED_BLINKING)
+    {
+      set_motor_state(false);
+      sumpLED.blink(500,500);
+      DPRINTLN("Blinking sump LED...");
+    }
+  }
+  else
+  {
+    if(sumpLED.getState() == LED_BLINKING)
+    {
+      sumpLED.cancel();
+      DPRINTLN("Cancelled Blinking sump LED...");
+    }
+  }
+}
+
+/*
+ * monitors the start/stop switch and takes action if its pressed
+ */
+void monitor_start_stop()
+{
+  if(start_stop_pressed)
+  {
+    if(digitalRead(MOTOR_PIN)) // means motor is ON , turn it OFF
+    {
+      set_motor_state(false);
+    }
+    else // means motor is OFF , turn it ON
+    {
+      set_motor_state(true);
+    }
+    start_stop_pressed = false;
+  }
+}
+
+/*
+ * runs the loop to check for incoming messages in the queue and other things
  */
 void loop() {
-  wd.update(true); //feed the watchdog by calling update
+  if(!structQueue.isEmpty())
+      currentMessage = structQueue.dequeue();
   
-    if(!structQueue.isEmpty())
-        currentMessage = structQueue.dequeue();
-      //else last message content is still there is currentMessage
-    
-    if(currentMessage != emptyMessage)
+  if(currentMessage != emptyMessage)
+  {
+    //DPRINTFLN("Processing msg id:%lu,type:%d,int1:%d,fval1:%f",currentMessage.message_id,currentMessage.msg_type,currentMessage.intvalue1,currentMessage.floatvalue1);
+    if(currentMessage.msg_type == ESPNOW_SENSOR)
     {
-      DPRINTFLN("Processing msg id:%lu,type:%d,int1:%d,fval1:%f",currentMessage.message_id,currentMessage.msg_type,currentMessage.intvalue1,currentMessage.floatvalue1);
-      if(currentMessage.msg_type == ESPNOW_SENSOR)
+      processMessage(currentMessage);
+      DPRINTFLN("Processing msg id:%lu",currentMessage.message_id);
+      last_time = millis(); // renew the last_time so that we know we're receiving messages regularly
+      if(statusLED.getState() == LED_BLINKING)
       {
-        processMessage(currentMessage);
-        last_time = millis(); // renew the last_time so that we know we're receiving messages regularly
-        if(statusLED.getState() == LED_BLINKING)
-        {
-          statusLED.cancel(); //cancel blinking to indicate we're good
-        }
-        statusLED.turnON();// ON indicates we're receiving messages regularly
-        currentMessage = emptyMessage;
+        statusLED.cancel(); //cancel blinking to indicate we're good
+        DPRINTLN("Connection to sensor restored...");
       }
+      statusLED.turnON();// ON indicates we're receiving messages regularly
+      currentMessage = emptyMessage;
     }
+  }
+  monitor_sump();
+  monitor_start_stop();
+
   if(millis() - last_time > HEALTH_INTERVAL)
   {
     // Blink to warn that a message has not been received since HEALTH_INTERVAL
     if(statusLED.getState() != LED_BLINKING)
     {
       statusLED.blink(500,500);
-      DPRINTLN("Blinking...");
+      DPRINTLN("Connection to sensor lost...");
     }
   }
-
   statusLED.loop();
-
 }

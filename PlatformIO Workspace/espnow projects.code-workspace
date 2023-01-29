@@ -21,20 +21,14 @@
 			"path": "..\\..\\Sketches\\ESP32\\espnow_sensor_32"
 		},
 		{
-			"name": "ESP32_Test",
-			"path": "..\\..\\..\\PlatformIO\\Projects\\ESP32_Test"
-		},
-		{
-			"name": "Espnow_test_sensor",
-			"path": "..\\Espnow_test_sensor"
-		},
-		{
 			"name": "PZEM_espnow",
 			"path": "..\\PZEM_espnow"
 		},
 		{
-			"name": "ESP32_Touch_Test",
-			"path": "../ESP32_Touch_Test"
+			"path": "../Water Level Controller without Hub/espnow_tank_sensor"
+		},
+		{
+			"path": "../Water Level Controller without Hub/espnow_level_controller"
 		}
 	],
 	"settings": {}

@@ -16,13 +16,16 @@
 
   #define MY_ROLE                 ESP_NOW_ROLE_SLAVE              // set the role of this device: CONTROLLER, SLAVE, COMBO
   #define RECEIVER_ROLE           ESP_NOW_ROLE_CONTROLLER              // set the role of the receiver
-  #define DEVICE_NAME             "controller_w8" //no spaces as this is used in topic names too
+  #define DEVICE_NAME             "tank_controller_w8" //no spaces as this is used in topic names too
   #define ESP_IP_ADDRESS          IP_controllerW8 //from secrets.h\static_ipaddress.h
 //  #define WiFi_SSID               primary_ssid //from secrets.h
   #define DEFAULT_CHANNEL         1
   #define STATUS_LED              2 //GPIO on which the status led is connected
-  #define MOTOR_PIN               16 //GPIO on which the motor is connected
-//  #define DEVICE_MAC              CONTROLLER_W8_AP_MAC // GATEWAY_FF_AP_MAC //CONTROLLER_W8_AP_MAC // from secrets.h . You should preferably define a custom MAC instead of actual device MAC so that the MAC doesnt change with device
+  #define SUMP_EMPTY_LED          13 // GPIO on which sump empty LED is connected
+  #define MOTOR_PIN               14 //GPIO on which the motor is connected
+  #define SUMP_PIN                4 // GPIO on which the sump (underground water storage) sensor is connected
+  #define START_STOP_PIN          5 // GPIO on which the momentary button to start/stop the motor is connected
+  #define DEVICE_MAC              CONTROLLER_W8_AP_MAC // GATEWAY_FF_AP_MAC //CONTROLLER_W8_AP_MAC // from secrets.h . You should preferably define a custom MAC instead of actual device MAC so that the MAC doesnt change with device
 #elif (DEVICE == CONTROLLER_TEST)
   //Turn features ON and OFF below
   #define SERIAL_DEBUG            IN_USE // Debug statements in use or not , dont turn it ON if you are using RX pin for MOTION SENSOR

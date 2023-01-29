@@ -349,7 +349,6 @@ bool sendESPnowMessage(espnow_message *myData,uint8_t peerAddress[], short retri
 
     if(ack)
     {
-      #if USING(EEPROM_STORE)
       long waitTimeStart = millis();
       //get a confirmation of successful delivery , else try again. This flag is set in the callback OnDataSent from the calling code
       while(!bResultReady && ((millis() - waitTimeStart) < WAIT_TIMEOUT))
@@ -367,14 +366,15 @@ bool sendESPnowMessage(espnow_message *myData,uint8_t peerAddress[], short retri
           // See if we are on the right channel, it might have changed since last time we wrote the same in EEPROM memory
           // Do it only once in the cycle to send a message else it consumes battery every time the ESP tries to send in case
           // there is permanent error in sending a message - eg. in case the Slave isnt available
+          #if USING(EEPROM_STORE)
           if(!channelRefreshed)
           {
               DPRINTLN("Refresh wifi channel...");
               setSSIDChannel(ssid,true);//force the channel refresh
               channelRefreshed = true;// this will enable refreshing of channel only once in a cycle, unless the flag is again reset by the calling code
           }
+          #endif
       }
-      #endif
     }
     else
       return result==0?true:false;
