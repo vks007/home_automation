@@ -202,7 +202,7 @@ void setSSIDChannel(const char ssid[MAX_SSID], bool forceChannelRefresh = false,
 * param: forceChannelRefresh : true forces the channel to be scanned again , false: tries to read the channel from RTC memory, if it fails then scans afresh
 * param: wifi_mode : WiFi mode to be set , should be WIFI_STA - for sensors , WIFI_AP_STA for Receivers
 */
-void initilizeESP(const char ssid[MAX_SSID],esp_now_role role, bool forceChannelRefresh = false, bool restartOnError= false, WiFiMode wifi_mode= WIFI_STA)
+void initilizeESP(const char ssid[MAX_SSID],esp_now_role role, bool forceChannelRefresh = false, bool restartOnError= false, WiFiMode_t wifi_mode= WIFI_STA)
 {
   // Set device as a Wi-Fi Station and set channel
   WiFi.mode(wifi_mode); 
@@ -226,7 +226,7 @@ void initilizeESP(const char ssid[MAX_SSID],esp_now_role role, bool forceChannel
 * param: channel : the channel number to be set , can be 1-14 only
 * param: wifi_mode : WiFi mode to be set , should be WIFI_STA - for sensors , WIFI_AP_STA for Receivers
 */
-void initilizeESP(short channel,esp_now_role role, WiFiMode wifi_mode)
+void initilizeESP(short channel,esp_now_role role, WiFiMode_t wifi_mode)
 {
   if(channel < 1 || channel > 14)
   {
@@ -308,15 +308,15 @@ bool refreshPeer(esp_now_peer_info_t *peer)
     delete_peer(peer);
     
     // Set the right channel of the peer
-    peer->channel = slave_channel;
+    peer->channel = WiFi.channel();
     // Register the peer
     if (esp_now_add_peer(peer) != ESP_OK)
     {
-        DPRINTFLN("Failed to add peer on channel:%u",slave_channel);
+        DPRINTFLN("Failed to add peer on channel:%u",peer->channel);
         return false;
     }
     else
-      {DPRINTFLN("Added peer: %02X:%02X:%02X:%02X:%02X:%02X on channel:%u",peer->peer_addr[0],peer->peer_addr[1],peer->peer_addr[2],peer->peer_addr[3],peer->peer_addr[4],peer->peer_addr[5],slave_channel);}
+      {DPRINTFLN("Added peer: %02X:%02X:%02X:%02X:%02X:%02X on channel:%u",peer->peer_addr[0],peer->peer_addr[1],peer->peer_addr[2],peer->peer_addr[3],peer->peer_addr[4],peer->peer_addr[5],peer->channel);}
     
     return true;
 }

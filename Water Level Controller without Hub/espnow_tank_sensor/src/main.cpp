@@ -172,7 +172,6 @@ bool sendMessage()
 
     bool result = sendESPnowMessage(&myData,gatewayAddress,1,true);
     msg_sent_time = millis();
-    DPRINTFLN("msg_sent_time:%l",msg_sent_time);
     DFLUSH();
     waiting_for_msg_ack = result == 0?true:false;
     return result;
@@ -192,7 +191,7 @@ void loop() {
     //we sent the message but havent got the ack in alloted time, go to deep sleep
     go_to_sleep = true;
   }
-  if(go_to_sleep = true)
+  if(go_to_sleep == true)
   {
     DPRINTFLN("Entering deep sleep for %d secs",SLEEP_DURATION);
     DFLUSH();
