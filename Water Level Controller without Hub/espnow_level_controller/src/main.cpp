@@ -48,6 +48,7 @@ const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 
 // const char* password = WiFi_SSID_PSWD; // comes from config.h
 long last_time = 0; // last time when health check was published
 bool start_stop_pressed = false; // flag to keep track if start stop button was pressed
+bool is_connected = false; // flag to indicate if the controller is receiving messages from the sensor on a regular basis
 long lastMillis = 0; // time when last button was pressed , for debouncing
 extern "C"
 { 
@@ -220,7 +221,7 @@ void set_motor_state(bool turn_on)
 /*
  * Proceses the message, in this case the message will either turn the motor ON/OFF or leave it as it is
  */
-bool processMessage(espnow_message msg)
+bool process_message(espnow_message msg)
 {
   if(msg.intvalue1 == 0) // sensor indicates the tank is full , turn OFF motor
   {
@@ -235,9 +236,11 @@ bool processMessage(espnow_message msg)
 
 
 /*
- * monitors the sump status, if it is empty then raises an alarm by blinking LED
+ * monitors the conditions which affect the state of the motor
+  if it is empty then raises an alarm by blinking LED
+  If there is no connection to the sensor or the sump is empty , it turns off motor
  */
-void monitor_sump()
+void monitor_motor_state()
 {
   if(!sump_button.read())
   {
@@ -256,6 +259,12 @@ void monitor_sump()
       sumpLED.cancel();
       DPRINTLN("Cancelled Blinking sump LED...");
     }
+  }
+  //monitor connection state and take action only if motor is ON
+  if(!is_connected && digitalRead(MOTOR_PIN))
+  {
+    set_motor_state(false);
+    DPRINTLN("Motor turned OFF due to lost connection to sensor");
   }
 }
 
@@ -290,7 +299,8 @@ void loop() {
     //DPRINTFLN("Processing msg id:%lu,type:%d,int1:%d,fval1:%f",currentMessage.message_id,currentMessage.msg_type,currentMessage.intvalue1,currentMessage.floatvalue1);
     if(currentMessage.msg_type == ESPNOW_SENSOR)
     {
-      processMessage(currentMessage);
+      is_connected = true;// set the status to connected as process_message uses this flag
+      process_message(currentMessage);
       DPRINTFLN("Processing msg id:%lu",currentMessage.message_id);
       last_time = millis(); // renew the last_time so that we know we're receiving messages regularly
       if(statusLED.getState() == LED_BLINKING)
@@ -302,11 +312,12 @@ void loop() {
       currentMessage = emptyMessage;
     }
   }
-  monitor_sump();
+  monitor_motor_state();
   monitor_start_stop();
 
   if(millis() - last_time > HEALTH_INTERVAL)
   {
+    is_connected = false;
     // Blink to warn that a message has not been received since HEALTH_INTERVAL
     if(statusLED.getState() != LED_BLINKING)
     {
