@@ -1,6 +1,8 @@
 /*
 
 // IMPORTANT : Compile it for the device you want, details of which are in Config.h
+TO DO :
+// implemented status_card to show log messages but it wraps up and doesnt show it well so commented it out. will figure out later
 */
 
 #include <Arduino.h>
@@ -29,6 +31,7 @@
 // I am using a local copy of this library instead from the std library repo as that has an error in cpp file.
 // The author has defined all functions which take a default argumnent again in the cpp file whereas the default argument should only be 
 // specified in the decleration and not in the implementation of the function.
+#include <ArduinoOTA.h>
 
 // ************ HASH DEFINES *******************
 #define VERSION "2.0"
@@ -42,6 +45,7 @@ const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 
 #define SENSOR_HEALTH_INTERVAL 30e3 // interval is millisecs to wait for sensor values before rasing a disconnect event
 #define DEBOUNCE_INTERVAL 500 // button bounce interval in ms
 #define DASHBOARD_UPDATE_INTERVAL 1e3 // interval is millisecs to publish updates to dashboard
+#define MAX_STATUS_MESSAGES  5 // max no of status messages to store and show on the dashboard card
 // ************ HASH DEFINES *******************
 
 // ************ GLOBAL OBJECTS/VARIABLES *******************
@@ -100,8 +104,22 @@ Card sump_card(&dashboard, STATUS_CARD, "Sump");
 Card tank_card(&dashboard, STATUS_CARD, "Tank");
 Card sensor_card(&dashboard, STATUS_CARD, "Sensor");
 Card battery_card(&dashboard, PROGRESS_CARD, "Sensor Battery","%",0,100);
-
+// Card status_card(&dashboard, GENERIC_CARD, "Status");
+// char status_msg[MAX_STATUS_MESSAGES][50]; // stores the last few status messages from the unit
+// byte status_msg_index = 0; // stores the index of current message on the status_msg array
 // ************ GLOBAL OBJECTS/VARIABLES *******************
+
+// void append_status_message(const char* msg)
+// {
+//   if(status_msg_index == (MAX_STATUS_MESSAGES-1))
+//   {
+//     status_msg_index = 0;
+//   }
+//   else
+//     status_msg_index++;
+//   strcpy(status_msg[status_msg_index],msg);
+
+// }
 
 /*
  * Callback when data is sent , It sets the bResultReady flag to true on successful delivery of message
@@ -174,6 +192,7 @@ void configure_wifi()
 
   /* Start AsyncWebServer */
   server.begin();
+  ArduinoOTA.begin();
 }
 
 /*
@@ -193,7 +212,10 @@ void set_motor_state(bool turn_on)
       motor_running = true;
     }
     else
+    {
       DPRINTLN("Ignoring motor ON command as SUMP is empty");
+      //append_status_message("Ignoring motor ON, SUMP empty");
+    }
   }
   else
   {
@@ -234,6 +256,16 @@ void update_dashboard()
     tank_card.update(tank_status,"idle");
 
   battery_card.update(battery_percent);
+
+  // String str;
+  // for(byte i=0;i<MAX_STATUS_MESSAGES;i++)
+  // {
+  //   str += String(status_msg[i]);
+  //   if(i< MAX_STATUS_MESSAGES-1)
+  //     str += String("\n");
+  // }
+  // status_card.update(str);
+
   dashboard.sendUpdates();
 
 }
@@ -332,6 +364,7 @@ void monitor_motor_state()
       set_motor_state(false);
       sumpLED.blink(500,500);
       DPRINTLN("Blinking sump LED...");
+      //append_status_message("Sump Empty");
     }
   }
   else
@@ -385,6 +418,7 @@ void loop() {
       sensor_connected = true;// set the status to connected as process_message uses this flag
       process_message(currentMessage);
       DPRINTFLN("Processing msg id:%lu",currentMessage.message_id);
+      //append_status_message("Processing msg from sensor");
       last_sensor_time = millis(); // renew the last_sensor_time so that we know we're receiving messages regularly
       if(statusLED.getState() == LED_BLINKING)
       {
@@ -409,6 +443,7 @@ void loop() {
     {
       statusLED.blink(500,500);
       DPRINTLN("Connection to sensor lost...");
+      //append_status_message("Connection to sensor lost...");
     }
   }
   //update the dashboard
@@ -419,4 +454,6 @@ void loop() {
   }
 
   statusLED.loop();
+  if(WiFi.isConnected())
+    ArduinoOTA.handle();
 }
