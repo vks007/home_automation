@@ -8,11 +8,9 @@
  #include "Debugutils.h"
 */
 
-#ifndef DEBUGUTILS_H
-#define DEBUGUTILS_H
+#pragma once
 
 #include "macros.h"
-//#define USING(feature) 1 feature
 
 #if defined(SERIAL_DEBUG)
   #if USING(SERIAL_DEBUG)
@@ -23,7 +21,7 @@
     #define DPRINTFLN(...) Serial.printf(__VA_ARGS__);Serial.printf("\n")
     #define DFLUSH()		Serial.flush()
     #define DEND()		Serial.end()
-#else
+  #else
     #define DPRINT(...)
     #define DPRINTLN(...)
     #define DBEGIN(...)
@@ -32,13 +30,44 @@
     #define DFLUSH()
     #define DEND()
   #endif
-
-  //#define PRINTFEATURE(name,feature) Serial.print(name);Serial.print("-ON");
-    // #if USING(feature)
-    //   Serial.print(name);Serial.print("-ON");
-    // #else
-    //   DPRINT(name);DPRINTLN("-OFF");
-    // #endif
+#elif defined(WEBSERIAL_DEBUG)
+  #if USING(WEBSERIAL_DEBUG)
+    #define DPRINT(...) Serial.print(__VA_ARGS__);WebSerial.print(__VA_ARGS__);
+    #define DPRINTLN(...) Serial.println(__VA_ARGS__);WebSerial.println(__VA_ARGS__);
+    #define DBEGIN(...) Serial.begin(__VA_ARGS__)
+    #define DFLUSH()		Serial.flush()
+    #define DEND()		Serial.end()
+	#define WBEGIN(...) WebSerial.begin(__VA_ARGS__)
+    #define DPRINTF(...) Serial.printf(__VA_ARGS__);WebSerial.printf(__VA_ARGS__)
+    #define DPRINTFLN(...) Serial.printf(__VA_ARGS__);Serial.println("");WebSerial.printf(__VA_ARGS__);WebSerial.println("")
+  #else
+    #define DPRINT(...)
+    #define DPRINTLN(...)
+    #define DBEGIN(...)
+    #define DPRINTF(...)
+    #define DPRINTFLN(...)
+    #define DFLUSH()
+    #define DEND()
+  #endif
+#elif defined(WEBSERIAL)
+  #if USING(WEBSERIAL)
+    #define DPRINT(...) Serial.print(__VA_ARGS__);WebSerial.print(__VA_ARGS__);
+    #define DPRINTLN(...) Serial.println(__VA_ARGS__);WebSerial.println(__VA_ARGS__);
+    #define DBEGIN(...) Serial.begin(__VA_ARGS__)
+    #define DFLUSH()		Serial.flush()
+    #define DEND()		Serial.end()
+	#define WBEGIN(...) WebSerial.begin(__VA_ARGS__)
+    #define DPRINTF(...) Serial.printf(__VA_ARGS__);WebSerial.printf(__VA_ARGS__)
+    #define DPRINTFLN(...) Serial.printf(__VA_ARGS__);Serial.println("");WebSerial.printf(__VA_ARGS__);WebSerial.println("")
+  #else
+    #define DPRINT(...)
+    #define DPRINTLN(...)
+    #define DBEGIN(...)
+    #define DPRINTF(...)
+    #define DPRINTFLN(...)
+    #define DFLUSH()
+    #define DEND()
+  #endif
 #elif defined(SERIAL1_DEBUG)
   #if USING(SERIAL1_DEBUG)
     #define DPRINT(...) Serial1.print(__VA_ARGS__)
@@ -67,4 +96,11 @@
   #define DEND()
 #endif
 
-#endif
+//#define PRINTFEATURE(name,feature) Serial.print(name);Serial.print("-ON");
+// #if USING(feature)
+//   Serial.print(name);Serial.print("-ON");
+// #else
+//   DPRINT(name);DPRINTLN("-OFF");
+// #endif
+
+

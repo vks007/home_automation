@@ -28,22 +28,20 @@ TO DO list:
 
 
 */
-
-#ifndef ESPNOW_CONTROLLER_H
-#define ESPNOW_CONTROLLER_H
+#pragma once
 #include <Arduino.h>
 #if defined(ESP8266)
 #include <ESP8266WiFi.h>
 #include <espnow.h>
 #elif defined(ESP32)
 #include <WiFi.h> // for WiFi functions, this needs to be added as a library dependency in platformio , lib name : WiFi
-#include <esp_wifi.h> // for esp_wifi_getslave_channel()
+#include <esp_wifi.h> 
 #include <esp_now.h>
 #endif
 #include "espnowMessage.h" // for struct of espnow message
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
 #if USING(EEPROM_STORE)
-#include <EEPROM.h> // to store WiFi channel number to EEPROM
+#include <EEPROM.h>
 #endif
 
 // ************ GLOBAL OBJECTS/VARIABLES *******************
@@ -86,7 +84,7 @@ enum	esp_now_role	{
 * While theritically it should be possible for WiFi and ESPNow to work on different channels but it seems due to some bug (or behavior) this isnt possible with espressif
 * return type : uint8_t
 */
-uint8_t getSSIDChannel(const char *ssid) {
+uint8_t get_channel_from_ssid(const char *ssid) {
   if (int32_t n = WiFi.scanNetworks()) {
       for (uint8_t i=0; i<n; i++) {
           DPRINTFLN("Found SSID: %s on Channel %u",WiFi.SSID(i).c_str(),WiFi.channel(i));
@@ -95,6 +93,7 @@ uint8_t getSSIDChannel(const char *ssid) {
           }
       }
   }
+  DPRINTFLN("Could not find the SSID : %s",ssid);
   return 0;
 }
 
@@ -130,67 +129,98 @@ void set_wifi_channel(short channel)
 
 }
 
-#if USING(EEPROM_STORE)
 /*
-* Sets the right channel for WiFi on the ESP. It finds the channel of the SSID passed to it and then changes the channel of the ESP to match the same
+* Determines the right channel for WiFi on the ESP. It finds the channel of the SSID passed as a parameter and returns the channel of the ESP to match the same
 * It also stores it in the EEPROM memory if different from the one already on for later use
-* While theritically it should be possible for WiFi and ESPNow to work on different channels but it seems due to some bug (or behavior) this isnt possible with espressif
+* While theoritically it should be possible for WiFi and ESPNow to work on different channels but it seems due to some bug (or behavior) this isnt possible with espressif
 * paramter- ssid - SSID for which to match the channel
 * parameter- forceChannelRefresh - force the code to scan the SSID channel afresh
-* paramter- restartOnError - restart the ESP if it is not able to set the channel properly (due to some unforeseen error)
 */
-void setSSIDChannel(const char ssid[MAX_SSID], bool forceChannelRefresh = false, bool restartOnError= false)
+uint8_t refresh_espnow_channel(const char ssid[MAX_SSID], bool forceChannelRefresh = false)
 {
-  uint8_t slave_channel = 0;//stores the channel of the slave by scanning the SSID the slave is on.
+  uint8_t current_channel = 0;
+  uint8_t new_channel = 0;
   DPRINTFLN("Current channel:%d",getWiFiChannel());
-  if(slave_channel == 0) // we're starting up , get the channel from the EEPROM
+  
+  #if USING(EEPROM_STORE)
+  // only get channel from memory if you're not forcing the channel
+  if(!forceChannelRefresh)
   {
-    slave_channel = EEPROM.read(0);
-    if(slave_channel > 0)
-    {DPRINTFLN("wifi channel read from memory = %d",slave_channel);}
-    else
-    {DPRINTFLN("Failed to read wifi channel from memory:%d",slave_channel);}
+    // Try to Get the channel from EEPROM
+    current_channel = EEPROM.read(0);
+    DPRINTFLN("Wifi channel read from memory = %d",current_channel);
+  }
+  #endif
+  
+  if((current_channel <= 0 || current_channel > 14) || forceChannelRefresh )//we have an invalid channel, it can only range between 1-14 , scan for a valid channel
+  {
+    new_channel = get_channel_from_ssid(ssid);
   }
   
-  if((slave_channel <= 0 || slave_channel > 14) || forceChannelRefresh )//we have an invalid channel, it can only range between 1-14 , scan for a valid channel
+  if(new_channel != 0)
   {
-      DPRINTFLN("Scanning channel for SSID = %s",ssid);
-      uint8_t new_channel = getSSIDChannel(ssid);
-      DPRINTFLN("new wifi channel scanned = %d",new_channel);
-      if(new_channel != 0)
-      {
-        if(new_channel != slave_channel)//only write the new channel if it's different from the one we already have to avoid wearing the EEPROM
-        {
-          slave_channel = new_channel;
-          EEPROM.write(0,(int)slave_channel);
-          EEPROM.commit();
-          // read back the channel to see if it was written properly
-          new_channel = EEPROM.read(0);
-          if(new_channel == slave_channel)
-            {DPRINTFLN("New wifi channel: %d successfully written to memory",new_channel);}
-          else
-            {DPRINTFLN("Failed to write wifi channel %d to memory",new_channel);}
-        }
-      }
-      else
-        DPRINTLN("Failed to get a valid channel for " && ssid);
-  }
-  
-  if((getWiFiChannel() != slave_channel) && slave_channel !=0)// no use changing channel if we got 0, it can happen if you dont find the SSID
-  {
-    set_wifi_channel(slave_channel);
-    delay(10);// not sure why did I keep this delay, may remove it later
-    // Check what channel have we got
-    uint8_t ch = getWiFiChannel();
-    DPRINTFLN("New WiFi channel set as:%d",ch);
-    //strange behavior : If I define ch as byte and make the comparison below , the ESP resets due to WDT and then hangs
-    if(ch == 0 && restartOnError)
+    if(new_channel != current_channel)//only write the new channel if it's different from the one we already have to avoid wearing the EEPROM
     {
-      DPRINTLN("Could not set WiFi Channel properly, restarting");
-      ESP.restart();
+      #if USING(EEPROM_STORE)
+      EEPROM.write(0,(int)new_channel);
+      EEPROM.commit();
+      // read back the channel to see if it was written properly
+      if(EEPROM.read(0) == new_channel)
+        {DPRINTFLN("New wifi channel: %d successfully written to memory",new_channel);}
+      else
+        {DPRINTFLN("Failed to write wifi channel %d to memory",new_channel);}
+      #endif
+      // Now set the new channel
+      set_wifi_channel(new_channel);
+      DPRINTFLN("New WiFi channel set as:%d",getWiFiChannel());
     }
+    else
+      DPRINTFLN("WiFi channel left unchanged to:%d",getWiFiChannel());
   }
+  else
+    DPRINTLN("Failed to get a valid channel for " && ssid);
   //  WiFi.printDiag(Serial);
+  return new_channel;
+}
+
+/*
+* calls all statements to initialize the esp device for espnow messages
+* It sets STA mode, sets the channel for wifi/espnow, sets ESP role for ESP8266
+* param: channel : the channel number to be set , can be 1-14 only
+* param: wifi_mode : WiFi mode to be set , should be WIFI_STA - for sensors , WIFI_AP_STA for Receivers
+*/
+void initilizeESP(esp_now_role role, WiFiMode_t wifi_mode)
+{
+  // Set device as a Wi-Fi Station
+  WiFi.mode(wifi_mode);
+  // if we're forcing an init again, deinit first
+  esp_now_deinit();
+  //Init ESP-NOW
+  if (esp_now_init() != 0) {
+    DPRINTLN("Error initializing ESP-NOW");
+    return;
+  }
+  DPRINTFLN("WiFi Channel set to %d. Ensure Rx & Tx are on the same channel.",WiFi.channel());
+  #if defined(ESP8266)
+  esp_now_set_self_role(role);
+  #endif
+}
+
+/*
+* calls all statements to initialize the esp device for espnow messages
+* It sets STA mode, sets the channel for wifi/espnow, sets ESP role for ESP8266
+* param: channel : the channel number to be set , can be 1-14 only
+* param: wifi_mode : WiFi mode to be set , should be WIFI_STA - for sensors , WIFI_AP_STA for Receivers
+*/
+void initilizeESP(uint8_t channel,esp_now_role role, WiFiMode_t wifi_mode)
+{
+  if(channel < 1 || channel > 14)
+  {
+    DPRINTLN("Error: Channel No can only be within the range 1-14");
+    return;
+  }
+  set_wifi_channel(channel);
+  initilizeESP(role,wifi_mode);
 }
 
 /*
@@ -202,55 +232,15 @@ void setSSIDChannel(const char ssid[MAX_SSID], bool forceChannelRefresh = false,
 * param: forceChannelRefresh : true forces the channel to be scanned again , false: tries to read the channel from RTC memory, if it fails then scans afresh
 * param: wifi_mode : WiFi mode to be set , should be WIFI_STA - for sensors , WIFI_AP_STA for Receivers
 */
-void initilizeESP(const char ssid[MAX_SSID],esp_now_role role, bool forceChannelRefresh = false, bool restartOnError= false, WiFiMode_t wifi_mode= WIFI_STA)
+void initilizeESP(const char ssid[MAX_SSID],esp_now_role role, short fallback_channel, bool forceChannelRefresh = false, WiFiMode_t wifi_mode= WIFI_STA)
 {
-  // Set device as a Wi-Fi Station and set channel
-  WiFi.mode(wifi_mode); 
-  setSSIDChannel(ssid,forceChannelRefresh,restartOnError);
-  
-  // if we're forcing an init again, deinit first
-  esp_now_deinit();
-  //Init ESP-NOW
-  if (esp_now_init() != 0) {
-    DPRINTLN("Error initializing ESP-NOW");
-    return;
-  }
-  #if defined(ESP8266)
-  esp_now_set_self_role(role);
-  #endif
-}
-#else
-/*
-* calls all statements to initialize the esp device for espnow messages
-* It sets STA mode, sets the channel for wifi/espnow, sets ESP role for ESP8266
-* param: channel : the channel number to be set , can be 1-14 only
-* param: wifi_mode : WiFi mode to be set , should be WIFI_STA - for sensors , WIFI_AP_STA for Receivers
-*/
-void initilizeESP(short channel,esp_now_role role, WiFiMode_t wifi_mode)
-{
-  if(channel < 1 || channel > 14)
-  {
-    DPRINTLN("Error: Channel No can only be within the range 1-14");
-    return;
-  }
-  // Set device as a Wi-Fi Station and set channel
+  // Set device WiFi mode
   WiFi.mode(wifi_mode);
-  set_wifi_channel(channel);
-  DPRINTFLN("WiFi Channel set to %d. Ensure Rx & Tx are on the same channel.",WiFi.channel());
-  
-  // if we're forcing an init again, deinit first
-  esp_now_deinit();
-  //Init ESP-NOW
-  if (esp_now_init() != 0) {
-    DPRINTLN("Error initializing ESP-NOW");
-    return;
-  }
-  #if defined(ESP8266)
-  esp_now_set_self_role(role);
-  #endif
+  uint8_t ch = refresh_espnow_channel(ssid,forceChannelRefresh);
+  if(ch == 0)
+    ch = fallback_channel;
+  initilizeESP(ch,role,wifi_mode);
 }
-
-#endif
 
 #if defined(ESP8266)
 /*
@@ -369,8 +359,9 @@ bool sendESPnowMessage(espnow_message *myData,uint8_t peerAddress[], short retri
           #if USING(EEPROM_STORE)
           if(!channelRefreshed)
           {
-              DPRINTLN("Refresh wifi channel...");
-              setSSIDChannel(ssid,true);//force the channel refresh
+              uint8_t ch = refresh_espnow_channel(ssid,true);
+              if(ch != 0)//force the channel refresh
+                set_wifi_channel(ch);
               channelRefreshed = true;// this will enable refreshing of channel only once in a cycle, unless the flag is again reset by the calling code
           }
           #endif
@@ -431,4 +422,3 @@ bool setCustomMAC(uint8_t customMACAddress[6], bool STA_MAC)
 
 
 
-#endif
