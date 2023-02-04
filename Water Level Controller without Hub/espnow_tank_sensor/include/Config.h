@@ -15,7 +15,7 @@
   uint8_t gatewayAddress[] =      CONTROLLER_W8_AP_MAC; // GATEWAY_FF_AP_MAC; CONTROLLER_W8_AP_MAC// //comes from secrets.h
   // #define WiFi_SSID               primary_ssid //from secrets.h
   // #define WiFi_SSID_PSWD          primary_ssid_pswd // used only for OTA updates else this is not used , from secrets.h
-  #define DEFAULT_CHANNEL         1
+  #define DEFAULT_CHANNEL         11
   #define SLEEP_DURATION          5 // sleep time interval in seconds
 #else
   #error "Device type not found. Have you passed DEVICE id in platform.ini as build flag. See Config.h for all DEVICES"
