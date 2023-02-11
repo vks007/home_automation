@@ -454,6 +454,7 @@ void loop() {
   }
 
   statusLED.loop();
+  sumpLED.loop();
   if(WiFi.isConnected())
     ArduinoOTA.handle();
 }
