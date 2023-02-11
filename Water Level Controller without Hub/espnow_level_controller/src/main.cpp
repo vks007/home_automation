@@ -42,10 +42,13 @@ const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 
   #define ESP_OK 0 // This is defined for ESP32 but not for ESP8266 , so define it
 #endif
 #define QUEUE_LENGTH 50 // max no of messages the ESP should queue up before replacing them, limited by amount of free memory
-#define SENSOR_HEALTH_INTERVAL 30e3 // interval is millisecs to wait for sensor values before rasing a disconnect event
+#define SENSOR_HEALTH_INTERVAL 15e3 // interval is millisecs to wait for sensor values before rasing a disconnect event
 #define DEBOUNCE_INTERVAL 500 // button bounce interval in ms
 #define DASHBOARD_UPDATE_INTERVAL 1e3 // interval is millisecs to publish updates to dashboard
-#define MAX_STATUS_MESSAGES  5 // max no of status messages to store and show on the dashboard card
+#define SIGNAL_UPDATE_INTERVAL 30e3 // no of seconds in which to update the signal stats
+#define MAX_SIGNAL_ITEMS 30 // no of items the signal array can hold , I think the chart has issues if this is beyond 35
+//#define MAX_STATUS_MESSAGES  5 // max no of status messages to store and show on the dashboard card
+
 // ************ HASH DEFINES *******************
 
 // ************ GLOBAL OBJECTS/VARIABLES *******************
@@ -55,6 +58,7 @@ const char* password = WiFi_SSID_PSWD; // comes from config.h
 #include "espnowController.h" //defines all utility functions for sending espnow messages from a controller
 long last_sensor_time = 0; // last time when health check was published
 long last_dashboard_time = 0; // last time when dashboard was refreshed with values
+long last_signal_update_time = 0; // last time when signal stat was updated
 bool start_stop_pressed = false; // flag to keep track if start stop button was pressed
 bool sensor_connected = false; // flag to indicate if the controller is receiving messages from the sensor on a regular basis
 bool motor_running = false; //flag to indicate if the motor is in running state or not
@@ -68,7 +72,8 @@ extern "C"
 }
 ArduinoQueue<espnow_message> structQueue(QUEUE_LENGTH);
 ezLED  statusLED(STATUS_LED,CTRL_CATHODE);
-ezLED  sumpLED(SUMP_EMPTY_LED,CTRL_ANODE);
+ezLED  sumpLED(SUMP_LED,CTRL_ANODE);
+ezLED  tankLED(TANK_LED,CTRL_ANODE);
 //List of controllers(sensors) who will send messages to this receiver
 uint8_t controller_mac[][6] = CONTROLLERS; //from secrets.h
 /* example entry : 
@@ -104,6 +109,10 @@ Card sump_card(&dashboard, STATUS_CARD, "Sump");
 Card tank_card(&dashboard, STATUS_CARD, "Tank");
 Card sensor_card(&dashboard, STATUS_CARD, "Sensor");
 Card battery_card(&dashboard, PROGRESS_CARD, "Sensor Battery","%",0,100);
+Chart signal_chart(&dashboard, BAR_CHART, "Signal History");
+int signal_xaxis[MAX_SIGNAL_ITEMS]; // holds values of no of mins that have elapsed since startup
+int signal_yaxis[MAX_SIGNAL_ITEMS]; // holds the value of signal at various intervals
+
 // Card status_card(&dashboard, GENERIC_CARD, "Status");
 // char status_msg[MAX_STATUS_MESSAGES][50]; // stores the last few status messages from the unit
 // byte status_msg_index = 0; // stores the index of current message on the status_msg array
@@ -284,7 +293,8 @@ void setup() {
   #endif
 
   pinMode(STATUS_LED,OUTPUT);
-  pinMode(SUMP_EMPTY_LED,OUTPUT);
+  pinMode(SUMP_LED,OUTPUT);
+  pinMode(TANK_LED,OUTPUT);
   pinMode(MOTOR_PIN,OUTPUT);
   pinMode(START_STOP_PIN,INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(START_STOP_PIN),ISR_start_stop,CHANGE);
@@ -335,11 +345,13 @@ bool process_message(espnow_message msg)
   {
     set_motor_state(false);
     strcpy(tank_status,"filled");
+    tankLED.turnOFF();
   }
   else // tank is empty , turn ON motor is sump is filled
   {
     set_motor_state(true);
     strcpy(tank_status,"empty");
+    tankLED.turnON();
   }
 
   battery_percent = map_Generic(msg.floatvalue1,3.0,4.2,0,100);
@@ -404,6 +416,28 @@ void monitor_start_stop()
 }
 
 /*
+ * updates the various stats for graphs
+ */
+void update_stats(bool force_update= false)
+{
+   if((millis() - last_signal_update_time > SIGNAL_UPDATE_INTERVAL) || force_update)
+   {
+    byte i=0;
+    for(i=0;i<MAX_SIGNAL_ITEMS-1;i++)
+    {
+      signal_xaxis[i] = signal_xaxis[i+1];
+      signal_yaxis[i] = signal_yaxis[i+1];
+    }
+      signal_xaxis[i] = int(millis()/(60*1000));// value in minutes
+      signal_yaxis[i] = sensor_connected?1:0; // I use a value 0 for signal absent and 1 for signal present
+      DPRINT(signal_xaxis[i]);DPRINT(","); DPRINTLN(signal_yaxis[i]);
+      signal_chart.updateX(signal_xaxis,MAX_SIGNAL_ITEMS);
+      signal_chart.updateY(signal_yaxis,MAX_SIGNAL_ITEMS);
+      last_signal_update_time = millis();
+   }
+}
+
+/*
  * runs the loop to check for incoming messages in the queue and other things
  */
 void loop() {
@@ -415,7 +449,11 @@ void loop() {
     //DPRINTFLN("Processing msg id:%lu,type:%d,int1:%d,fval1:%f",currentMessage.message_id,currentMessage.msg_type,currentMessage.intvalue1,currentMessage.floatvalue1);
     if(currentMessage.msg_type == ESPNOW_SENSOR)
     {
-      sensor_connected = true;// set the status to connected as process_message uses this flag
+      if(!sensor_connected)
+      {
+        sensor_connected = true;// set the status to connected as process_message uses this flag
+        update_stats(true);//whenever there is a change in sensor status , update the stats
+      }
       process_message(currentMessage);
       DPRINTFLN("Processing msg id:%lu",currentMessage.message_id);
       //append_status_message("Processing msg from sensor");
@@ -435,7 +473,11 @@ void loop() {
 
   if(millis() - last_sensor_time > SENSOR_HEALTH_INTERVAL)
   {
-    sensor_connected = false;
+    if(sensor_connected)
+    {
+      sensor_connected = false;// set the status to connected as process_message uses this flag
+      update_stats(true);//whenever there is a change in sensor status , update the stats
+    }
     strcpy(tank_status,"unknown");
 
     // Blink to warn that a message has not been received since SENSOR_HEALTH_INTERVAL
@@ -446,6 +488,9 @@ void loop() {
       //append_status_message("Connection to sensor lost...");
     }
   }
+  
+  update_stats();
+
   //update the dashboard
   if(millis() - last_dashboard_time > DASHBOARD_UPDATE_INTERVAL)
   {
@@ -455,6 +500,7 @@ void loop() {
 
   statusLED.loop();
   sumpLED.loop();
+  tankLED.loop();
   if(WiFi.isConnected())
     ArduinoOTA.handle();
 }
