@@ -111,7 +111,7 @@ void setup() {
   #if USING(EEPROM_STORE)
     //Initialize EEPROM , this is used to store the channel no for espnow in the memory, only stored when it changes which is rare
     EEPROM.begin(EEPROM_SIZE);// size of the EEPROM to be allocated, 16 is the minimum
-    initilizeESP(ssid,MY_ROLE);
+    initilizeESP(ssid,MY_ROLE,DEFAULT_CHANNEL);
   #else
     initilizeESP(DEFAULT_CHANNEL,MY_ROLE,WIFI_STA);
   #endif

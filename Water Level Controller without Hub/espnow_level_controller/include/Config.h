@@ -12,6 +12,7 @@
   #define SERIAL_DEBUG            IN_USE // Debug statements in use or not , dont turn it ON if you are using RX pin for MOTION SENSOR
   #define SECURITY                NOT_IN_USE // encryption of messages
   #define EEPROM_STORE            NOT_IN_USE // If EEPROM is in use or not, at present only needed for sensor devices, gateway has not present use
+  #define WIFI_CONNECTION         NOT_IN_USE // WiFi is being used or not
   //Turn features ON and OFF below ----------- end
 
   #define MY_ROLE                 ESP_NOW_ROLE_SLAVE              // set the role of this device: CONTROLLER, SLAVE, COMBO
@@ -20,7 +21,7 @@
   #define ESP_IP_ADDRESS          IP_controllerW8 //from secrets.h\static_ipaddress.h
   #define WiFi_SSID               w8_ssid //from secrets.h
   #define WiFi_SSID_PSWD          w8_ssid_pswd //from secrets.h
-  #define DEFAULT_CHANNEL         11
+  #define DEFAULT_CHANNEL         1
   #define STATUS_LED              2 //GPIO on which the status led is connected
   #define SUMP_LED                12 // GPIO on which sump status LED is connected
   #define TANK_LED                13 // GPIO on which tank status LED is connected
@@ -33,16 +34,16 @@
   #define SERIAL_DEBUG            IN_USE // Debug statements in use or not , dont turn it ON if you are using RX pin for MOTION SENSOR
   #define SECURITY                NOT_IN_USE // encryption of messages
   #define EEPROM_STORE            NOT_IN_USE // If EEPROM is in use or not, at present only needed for sensor devices, gateway has not present use
-  #define USE_OTA                 IN_USE // OTA is being used or not
+  #define WIFI_CONNECTION         NOT_IN_USE // WiFi is being used or not
   //Turn features ON and OFF below ----------- end
 
   #define MY_ROLE                 ESP_NOW_ROLE_SLAVE              // set the role of this device: CONTROLLER, SLAVE, COMBO
   #define RECEIVER_ROLE           ESP_NOW_ROLE_CONTROLLER              // set the role of the receiver
   #define DEVICE_NAME             "tank_controller_test" //no spaces as this is used in topic names too
   #define ESP_IP_ADDRESS          IP_controllerW8 //from secrets.h\static_ipaddress.h
-  #define WiFi_SSID               primary_ssid //from secrets.h
-  #define WiFi_SSID_PSWD          primary_ssid_pswd //from secrets.h
-  #define DEFAULT_CHANNEL         11
+  #define WiFi_SSID               test_ssid //from secrets.h
+  #define WiFi_SSID_PSWD          test_ssid_pswd //from secrets.h
+  #define DEFAULT_CHANNEL         1
   #define STATUS_LED              2 //GPIO on which the status led is connected
   #define SUMP_LED                12 // GPIO on which sump status LED is connected
   #define TANK_LED                13 // GPIO on which tank status LED is connected

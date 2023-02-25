@@ -277,7 +277,9 @@ void setup() {
   device_name.replace("_","-");//hostname dont allow underscores or spaces
   WiFi.hostname(device_name.c_str());// Set Hostname.
 
+  #if USING(WIFI_CONNECTION)
   configure_wifi();
+  #endif
 
   // Set the device as a Station and Soft Access Point simultaneously
   // This has to be WIFI_AP_STA and not WIFI_STA, if set to WIFI_STA then it can only receive broadcast messages and stops receiving MAC specific messages.
