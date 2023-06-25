@@ -7,7 +7,9 @@
 typedef enum {
     ESPNOW_SENSOR     = 0, // messages sent by sensor devices with their data
     ESPNOW_OTA        = 1, // messages sent by any device on OTA state
-    ESPNOW_COMMAND    = 2  // messages sent by any device with action info in the message
+    ESPNOW_COMMAND    = 2,  // messages sent by any device with action info in the message
+    ESPNOW_QUERY      = 3,  // messages to query the gateway about its info like channel number etc
+    ESPNOW_RESPONSE      = 4  // messages in response to a query message
 } msg_type_t;
 
 typedef enum {

@@ -2,16 +2,15 @@
  * ESPOTA.h - provides OTA capability for an ESP board (not tested with ESP32 yet)
  * To use this follow the following steps :
 	- include this file in your program
-	- include a call to setupOTA() in the setup after connecting to WiFi
-	- include the call to the function ArduinoOTA.handle() in the main loop
+	- include a call to SETUP_OTA() in the setup after connecting to WiFi
+	- include the call to the function HANDLE_OTA() in the main loop
 */
-
-#ifndef ESPOTA_H
-#define ESPOTA_H
+#pragma once
 #include <ArduinoOTA.h>
+#include <ESP8266WiFi.h>
 #include "Debugutils.h" 
 
-#ifdef USE_OTA
+#if USING(USE_OTA)
 #define SETUP_OTA() setupOTA()
 #define HANDLE_OTA() ArduinoOTA.handle();
 
@@ -58,4 +57,4 @@ void setupOTA()
 	#define HANDLE_OTA()
 #endif
 	
-#endif
+

@@ -185,14 +185,10 @@ uint8_t refresh_espnow_channel(const char ssid[MAX_SSID], bool forceChannelRefre
 
 /*
 * calls all statements to initialize the esp device for espnow messages
-* It sets STA mode, sets the channel for wifi/espnow, sets ESP role for ESP8266
 * param: channel : the channel number to be set , can be 1-14 only
-* param: wifi_mode : WiFi mode to be set , should be WIFI_STA - for sensors , WIFI_AP_STA for Receivers
 */
-void initilizeESP(esp_now_role role, WiFiMode_t wifi_mode)
+void initilizeESP(esp_now_role role)
 {
-  // Set device as a Wi-Fi Station
-  WiFi.mode(wifi_mode);
   // if we're forcing an init again, deinit first
   esp_now_deinit();
   //Init ESP-NOW
@@ -204,6 +200,19 @@ void initilizeESP(esp_now_role role, WiFiMode_t wifi_mode)
   #if defined(ESP8266)
   esp_now_set_self_role(role);
   #endif
+}
+
+/*
+* calls all statements to initialize the esp device for espnow messages
+* It sets STA mode, sets the channel for wifi/espnow, sets ESP role for ESP8266
+* param: channel : the channel number to be set , can be 1-14 only
+* param: wifi_mode : WiFi mode to be set , should be WIFI_STA - for sensors , WIFI_AP_STA for Receivers
+*/
+void initilizeESP(esp_now_role role, WiFiMode_t wifi_mode)
+{
+  // Set device as a Wi-Fi Station
+  WiFi.mode(wifi_mode);
+  initilizeESP(role);
 }
 
 /*
@@ -353,18 +362,18 @@ bool sendESPnowMessage(espnow_message *myData,uint8_t peerAddress[], short retri
       else
       {
           bResultReady = false; // message sending failed , prepare for next iteration
-          // See if we are on the right channel, it might have changed since last time we wrote the same in EEPROM memory
-          // Do it only once in the cycle to send a message else it consumes battery every time the ESP tries to send in case
-          // there is permanent error in sending a message - eg. in case the Slave isnt available
-          #if USING(EEPROM_STORE)
-          if(!channelRefreshed)
-          {
-              uint8_t ch = refresh_espnow_channel(ssid,true);
-              if(ch != 0)//force the channel refresh
-                set_wifi_channel(ch);
-              channelRefreshed = true;// this will enable refreshing of channel only once in a cycle, unless the flag is again reset by the calling code
-          }
-          #endif
+          // // See if we are on the right channel, it might have changed since last time we wrote the same in EEPROM memory
+          // // Do it only once in the cycle to send a message else it consumes battery every time the ESP tries to send in case
+          // // there is permanent error in sending a message - eg. in case the Slave isnt available
+          // #if USING(EEPROM_STORE)
+          // if(!channelRefreshed)
+          // {
+          //     uint8_t ch = refresh_espnow_channel(ssid,true);
+          //     if(ch != 0)//force the channel refresh
+          //       set_wifi_channel(ch);
+          //     channelRefreshed = true;// this will enable refreshing of channel only once in a cycle, unless the flag is again reset by the calling code
+          // }
+          // #endif
       }
     }
     else
