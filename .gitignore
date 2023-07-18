@@ -3,3 +3,5 @@ secrets.h
 static_ipaddress.h
 *.dmp
 *.pdf
+*.pub
+*.ppk
