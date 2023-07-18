@@ -299,6 +299,7 @@ bool publishToMQTT(espnow_message msg) {
   return publishToMQTT(str_msg.c_str(),final_publish_topic,false);
 }
 
+#if USING(MOTION_SENSOR)
 /*
  * Creates a message string for motion ON message and publishes it to a MQTT queue
  * Returns true if message was published successfully else false
@@ -312,6 +313,7 @@ bool publishMotionMsgToMQTT(const char topic_name[],const char state[4]) {
   strcat(publish_topic,"/state");
   return publishToMQTT(state,publish_topic,false);
 }
+#endif
 
 /*
  * Callback when data is sent , It sets the bResultReady flag to true on successful delivery of message
@@ -339,6 +341,22 @@ void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
 };
 
 /*
+ * updates the gateway statistics , called before publishing a health message
+ */
+void update_gateway_stats()
+{
+  gateway.queue_length = structQueue.itemCount();
+  gateway.rssi = WiFi.RSSI();
+  gateway.str_mac = WiFi.macAddress();
+  gateway.str_macAP = WiFi.softAPmacAddress();
+  gateway.uptime = millis()/6000; //publish uptime in minutes
+  gateway.wifi_channel = WiFi.channel();
+  gateway.msg_rate = (gateway.msg_count - last_message_count)/(float)(HEALTH_INTERVAL/(60*1000));//rate calculated over one minute
+  last_message_count = gateway.msg_count;//reset the count
+  gateway.free_mem_KB = ESP.getFreeHeap()/ 1024.0;
+}
+
+/*
  * creates data for health message and publishes it
  * takes bool param init , if true then publishes the startup message else publishes the health check message
  */
@@ -346,6 +364,7 @@ bool publishHealthMessage(bool init=false)
 {
   char publish_topic[65] = "";
   String str_msg="";
+  update_gateway_stats();
 
   if(init)
   {
@@ -392,18 +411,6 @@ bool publishHealthMessage(bool init=false)
    }
   }
   return false;//control will never come here
-}
-void update_gateway_stats()
-{
-  gateway.queue_length = structQueue.itemCount();
-  gateway.rssi = WiFi.RSSI();
-  gateway.str_mac = WiFi.macAddress();
-  gateway.str_macAP = WiFi.softAPmacAddress();
-  gateway.uptime = millis()/6000; //publish uptime in minutes
-  gateway.wifi_channel = WiFi.channel();
-  gateway.msg_rate = (gateway.msg_count - last_message_count)/(float)(HEALTH_INTERVAL/(60*1000));//rate calculated over one minute
-  last_message_count = gateway.msg_count;//reset the count
-  gateway.free_mem_KB = ESP.getFreeHeap()/ 1024.0;
 }
 
 
@@ -687,6 +694,7 @@ bool process_command_message(espnow_message &msg)
 }
 
 
+#if USING(MOTION_SENSOR)
 /*
  * determines the state of motion sensor and publishes a message accordingly
  */
@@ -704,6 +712,7 @@ void update_motion_sensor()
     publishMotionMsgToMQTT(motion_sensor.getSensorName(),"off");
   }
 }
+#endif
 
 /*
  * runs the loop to check for incoming messages in the queue, picks them up and posts them to MQTT
@@ -795,16 +804,18 @@ void loop() {
   // try to publish health message irrespective of the state of espnow messages
   if(millis() - last_time > HEALTH_INTERVAL)
   {
+    if(initilized)
+    {
+      //publish the health message
+      publishHealthMessage();
+    }
+    else
     // It might be possible when the ESP comes up MQTT is down, in that case an init message will not get published in setup()
     // The statement below will check and publish the same , only once
-    if(!initilized)
     {
       if(publishHealthMessage(true))
         initilized = true;
     }
-    //Now publish the health message
-    update_gateway_stats();
-    publishHealthMessage();
     last_time = millis(); // This is reset irrespective of a successful publish else the main loop will continously try to publish this message
   }
   statusLED.loop();

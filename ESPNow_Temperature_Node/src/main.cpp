@@ -32,7 +32,7 @@
 // ************ HASH DEFINES *******************
 #define MAX_COUNT 5000 // No of times a message is retries to be sent before dropping the message
 #define ONE_WIRE_BUS 4 // gets readings from the data pin of DS18B20 sensor , there should be a pull up from this pin to Vcc
-#define RESISTOR_CONST 5.156 // constant obtained by Resistor divider network. Vbat----R1---R2---GND . Const = (R1+R2)/R1
+#define RESISTOR_CONST 5.156 // constant obtained by Resistor divider network. Vbat----R1---R2---GND . Const = (R1+R2)/R2
         // I have used R1 = 1M , R2=270K. calc factor comes to 4.7 but actual measurements gave me a more precise value of 5.156
 // ************ HASH DEFINES *******************
 
@@ -108,13 +108,19 @@ void setup() {
   DPRINTLN();
   printInitInfo();
   pinMode(SENSOR_POWER_PIN,OUTPUT);
-  sensors.begin();//start sensors
+  sensors.begin();//start temperature sensor
 
   //Initialize EEPROM , this is used to store the channel no for espnow in the memory, only stored when it changes which is rare
   EEPROM.begin(16);// 16 is the size of the EEPROM to be allocated, 16 is the minimum
 
   DPRINTLN("initializing espnow");
-  initilizeESP(ssid,MY_ROLE);
+  #if USING(EEPROM_STORE)
+    //Initialize EEPROM , this is used to store the channel no for espnow in the memory, only stored when it changes which is rare
+    EEPROM.begin(EEPROM_SIZE);// size of the EEPROM to be allocated, 16 is the minimum
+    initilizeESP(ssid,MY_ROLE,DEFAULT_CHANNEL);
+  #else
+    initilizeESP(DEFAULT_CHANNEL,MY_ROLE,WIFI_STA);
+  #endif
 
   #if(USING(SECURITY))
     esp_now_set_kok(kok, 16);
