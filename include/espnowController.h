@@ -57,6 +57,7 @@ volatile bool bResultReady = false;
 #define KEY_LEN  16 // lenght of PMK & LMK key (fixed at 16 for ESP)
 #define WAIT_TIMEOUT 25 // time in millis to wait for acknowledgement of the message sent
 #define CONNECTION_RETRY_INTERVAL 30 // time is secs to wait before refreshing the connection in case of failure
+#define DEFAULT_ESPNOW_CHANNEL         1 // default channel for espnow in case retrieving of channel from SSID fails
 #define MAX_SSID 50
 //Define the esp_now_peer_info if we're working with esp8266, for ESP32 its already defined
 #if defined(ESP8266)
@@ -156,6 +157,8 @@ uint8_t refresh_espnow_channel(const char ssid[MAX_SSID], bool forceChannelRefre
   {
     new_channel = get_channel_from_ssid(ssid);
   }
+  else
+    new_channel = current_channel; // assign the current channel, no changes are needed, this function will exit successfully below
   
   if(new_channel != 0)
   {
@@ -175,7 +178,7 @@ uint8_t refresh_espnow_channel(const char ssid[MAX_SSID], bool forceChannelRefre
       DPRINTFLN("New WiFi channel set as:%d",getWiFiChannel());
     }
     else
-      DPRINTFLN("WiFi channel left unchanged to:%d",getWiFiChannel());
+      DPRINTFLN("WiFi channel left unchanged to:%d",new_channel);
   }
   else
     DPRINTLN("Failed to get a valid channel for " && ssid);
@@ -241,7 +244,7 @@ void initilizeESP(uint8_t channel,esp_now_role role, WiFiMode_t wifi_mode)
 * param: forceChannelRefresh : true forces the channel to be scanned again , false: tries to read the channel from RTC memory, if it fails then scans afresh
 * param: wifi_mode : WiFi mode to be set , should be WIFI_STA - for sensors , WIFI_AP_STA for Receivers
 */
-void initilizeESP(const char ssid[MAX_SSID],esp_now_role role, short fallback_channel, bool forceChannelRefresh = false, WiFiMode_t wifi_mode= WIFI_STA)
+void initilizeESP(const char ssid[MAX_SSID],esp_now_role role, short fallback_channel=DEFAULT_ESPNOW_CHANNEL, bool forceChannelRefresh = false, WiFiMode_t wifi_mode= WIFI_STA)
 {
   // Set device WiFi mode
   WiFi.mode(wifi_mode);

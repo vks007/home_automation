@@ -175,7 +175,7 @@ This function converts a MAC in String format to a MAC (uint8_t* array)
 Function returns uint8_t array
 Source/Credits: https://github.com/aZholtikov/ZHNetwork/blob/main/src/ZHNetwork.cpp
 */
-uint8_t stringToMac(const String &string, uint8_t *mac)
+uint8_t* stringToMac(const String &string, uint8_t *mac)
 {
     const uint8_t baseChars[75]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 0, 0, 0, 0, 0, 0,
                                 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 0, 0, 0, 0, 0, 0,
