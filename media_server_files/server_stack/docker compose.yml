@@ -1,0 +1,35 @@
+services:
+  samba:
+    image: dperson/samba
+    container_name: samba
+    environment:
+      TZ: 'Asia/Kolkota'
+    networks:
+      - default
+    ports:
+      - "137:137/udp"
+      - "138:138/udp"
+      - "139:139/tcp"
+      - "445:445/tcp"
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    volumes:
+      - /media/frigate:/media/frigate:z
+    command: '-s "frigate;/media/frigate;yes;no;no;ha_samba;vijay;vijay;Frigate Media Files"  -u "ha_samba;kjhs!fd%jj^FnUA6*" -p'
+
+  docker_mon:
+    image: philhawthorne/ha-dockermon
+    container_name: ha_dockermon
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /home/vijay/server_data/hadockermon:/config
+    ports:
+      - 8126:8126
+
+networks:
+  default:
