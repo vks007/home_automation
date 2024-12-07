@@ -66,6 +66,8 @@ volatile espnow_mode_t ota_mode = MODE_NORMAL; // mode in which the ESP starts, 
 unsigned long start_time = millis(); // keeps track of the time ESP started, can be changed in between though
 const unsigned short eeprom_start_add = sizeof(int); // starting address of EEPROm for use of this ESP. This is determined by the space espnowcontroller 
 bool msgSent = false ; // indicates if the message is sent when ESP wakes up so that it doesnt send any other message till it kills power to itself
+bool powered_down = false; // indicates if the ESP has been powered down after doing its job
+
 // takes to store its data which at present is only the WiFi channel number as integer, the rest till EEPROM_SIZE is available to this ESP to store its data
 #if USING(SECURITY)
 uint8_t kok[16]= PMK_KEY_STR;//comes from secrets.h
@@ -302,16 +304,17 @@ void scan_for_messages()
 
 void setup() {
   //Set the HOLD pin HIGH so that the ESP maintains power to itself. We will set it to low once we're done with the job, terminating power to ESP
-  DBEGIN(115200);
-  printInitInfo();
-  setCustomMAC(customMACAddress,true);
-
-  pinMode(HOLD_PIN, FUNCTION_3);//Because we're using Rx & Tx as inputs here, we have to set the input type     
   pinMode(HOLD_PIN, OUTPUT);
   if(HOLDING_LOGIC == LOGIC_NORMAL)
     digitalWrite(HOLD_PIN, HIGH);  // sets HOLD_PIN to high
   else // LOGIC_INVERTED
     digitalWrite(HOLD_PIN, LOW);  // sets HOLD_PIN to high
+
+  DBEGIN(115200);
+  printInitInfo();
+  setCustomMAC(customMACAddress,true);
+
+  pinMode(HOLD_PIN, FUNCTION_3);//Because we're using Rx & Tx as inputs here, we have to set the input type     
 
   //Initialize EEPROM , this is used to store the channel no for espnow in the memory, only stored when it changes which is rare
   // Also used for storing OTA flag
@@ -378,14 +381,18 @@ void loop() {
       #if USING(TEST_MODE)
       delay(10000); // we're in test mode, kill time before looping again
       #else
-      set_led(false);
-      // Now you can kill power
-      DPRINTLN("powering down");
-      DFLUSH();
-      if(HOLDING_LOGIC == LOGIC_NORMAL)
-        digitalWrite(HOLD_PIN, LOW);  // cut power to the ESP
-      else // LOGIC_INVERTED
-        digitalWrite(HOLD_PIN, HIGH);  // cut power to the ESP
+      if(!powered_down)
+      {
+        set_led(false);
+        // Now you can kill power
+        DPRINTLN("powering down");
+        powered_down = true;
+        DFLUSH();
+        if(HOLDING_LOGIC == LOGIC_NORMAL)
+          digitalWrite(HOLD_PIN, LOW);  // cut power to the ESP
+        else // LOGIC_INVERTED
+          digitalWrite(HOLD_PIN, HIGH);  // cut power to the ESP
+      } // else nothing to do, leep looping if ESP is powered
       #endif
     }
   }

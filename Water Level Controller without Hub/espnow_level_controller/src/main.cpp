@@ -43,11 +43,13 @@ const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 
   #define ESP_OK 0 // This is defined for ESP32 but not for ESP8266 , so define it
 #endif
 #define QUEUE_LENGTH 50 // max no of messages the ESP should queue up before replacing them, limited by amount of free memory
-#define SENSOR_HEALTH_INTERVAL 30e3 // interval is millisecs to wait for sensor values before rasing a disconnect event
 #define DEBOUNCE_INTERVAL 500 // button bounce interval in ms
 #define DASHBOARD_UPDATE_INTERVAL 1e3 // interval is millisecs to publish updates to dashboard
 #define SIGNAL_CHART_UPDATE_INTERVAL 1800e3 // no of seconds in which to update the signal stats
 #define MAX_SIGNAL_ITEMS 30 // no of items the signal array can hold , I think the chart has issues if this is beyond 35
+#define TANK_FULL          0 // value receieved from tank sensor when tank is full
+#define TANK_EMPTY         1 // value receieved from tank sensor when tank is empty
+#define TANK_UNKNOWN       2 // tank sensor value when no value has been received from the tank
 // ************ HASH DEFINES *******************
 
 // ************ GLOBAL OBJECTS/VARIABLES *******************
@@ -61,7 +63,7 @@ long last_signal_update_time = 0; // last time when signal stat was updated
 bool sensor_connected = false; // flag to indicate if the controller is receiving messages from the sensor on a regular basis
 bool motor_running = false; //flag to indicate if the motor is in running state or not
 bool sump_empty = false; // Flag to store the status of sump
-char tank_status[10] = "unknown"; // status of the Tank to be shown on the dashboard
+uint8_t tank_state = TANK_UNKNOWN; // state of the tank
 short battery_percent = 0; // stores the battery % left for the sensor
 long lastMillis = 0; // time when last button was pressed , for debouncing
 extern "C"
@@ -125,7 +127,7 @@ esp_now_send_cb_t OnDataSent([](uint8_t *mac_addr, uint8_t status) {
 void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
   espnow_message msg;
   memcpy(&msg, incomingData, sizeof(msg));
-  DPRINTF("OnDataRecv:%lu,%d,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.msg_type,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
+  DPRINTF("OnDataRecv:ID:%lu,Type:%d,Level:%d,%d,%d,%d,Batt:%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.msg_type,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
   if(!structQueue.isFull())
     structQueue.enqueue(msg);
   else
@@ -175,16 +177,17 @@ void configure_wifi()
 
 /*
  Turns the motor ON/OFF after checking the relavent conditions
- param: turn_on - bool , if true motore is turned on else off
+ param: turn_on - bool , if true motor is turned on else off
  */
 void set_motor_state(bool turn_on)
 {
   if(turn_on)  
   {
-    if(digitalRead(MOTOR_PIN))
+    if(motor_running)
       return; //motor is already ON, nothing to do
-    // Turn ON motor only if sump is filled
-    if(sump_button.read())
+    
+    // Turn ON motor only if sump is filled and tank value if not unknown
+    if(sump_button.read() && tank_state != TANK_UNKNOWN)
     {
       digitalWrite(MOTOR_PIN,HIGH);
       DPRINTLN("Turning motor ON");
@@ -197,7 +200,7 @@ void set_motor_state(bool turn_on)
   }
   else
   {
-    if(digitalRead(MOTOR_PIN)) // turn OFF motor only if it is ON
+    if(motor_running) // turn OFF motor only if it is ON
     {
       digitalWrite(MOTOR_PIN,LOW);
       DPRINTLN("Turning motor OFF");
@@ -228,13 +231,13 @@ void update_dashboard()
     sensor_card.update("connected","success");
   else
     {sensor_card.update("disconnected","danger");}
-  
-  if(strcmp(tank_status,"filled") == 0)
-    tank_card.update(tank_status,"success");
-  else if(strcmp(tank_status,"empty") == 0)
-    tank_card.update(tank_status,"danger");
+
+  if(tank_state == TANK_FULL)
+    tank_card.update("full","success");
+  else if(tank_state == TANK_EMPTY)
+    tank_card.update("empty","danger");
   else
-    tank_card.update(tank_status,"idle");
+    tank_card.update("unknown","idle");
 
   if(WiFi.isConnected())
   {
@@ -317,17 +320,19 @@ void setup() {
  */
 bool process_message(espnow_message msg)
 {
-  // status of the tank level is received in the intvalue1 field. 
-  if(msg.intvalue1 == TANK_FULL_VALUE) // sensor indicates the tank is filled , turn OFF motor
+  // status of the tank level is received in the intvalue1 field as either 0 or 1
+  tank_state = msg.intvalue1 == TANK_FULL? TANK_FULL:TANK_EMPTY;
+  if(INVERT_LEVEL_LOGIC)
+    tank_state = !tank_state;
+
+  if(tank_state == TANK_FULL) // sensor indicates the tank is filled , turn OFF motor
   {
     set_motor_state(false);
-    strcpy(tank_status,"filled");
     tankLED.turnOFF();
   }
   else // tank is empty , turn ON motor is sump is filled
   {
     set_motor_state(true);
-    strcpy(tank_status,"empty");
     tankLED.turnON();
   }
 
@@ -364,7 +369,8 @@ void monitor_motor_state()
     }
   }
   //monitor connection state and take action only if motor is ON
-  if(!sensor_connected && digitalRead(MOTOR_PIN))
+  // Turn off motor if the sensor is not connected OR tank state is unknown
+  if(motor_running && (!sensor_connected || tank_state== TANK_UNKNOWN))
   {
     set_motor_state(false);
     DPRINTLN("Motor turned OFF due to lost connection to sensor");
@@ -405,9 +411,9 @@ void monitor_sensor_status()
     if(sensor_connected)
     {
       sensor_connected = false;// set the status to connected as process_message uses this flag
+      tank_state = TANK_UNKNOWN; // clear the last tank state and set it to unknown
       update_stats(true);//whenever there is a change in sensor status , update the stats
     }
-    strcpy(tank_status,"unknown");
 
     // Blink to warn that a message has not been received since SENSOR_HEALTH_INTERVAL
     if(statusLED.getState() != LED_BLINKING)

@@ -69,6 +69,20 @@ See similar example of sleep using WDT here: https://arduinodiy.wordpress.com/20
 #define bit_write(c,p,m) (c ? bit_set(p,m) : bit_clear(p,m))
 #define BIT(x) (0x01 << (x))
 
+// prescale WDT timer . See section Section 8.5.2 Table 8-2 in datasheet of t13A for values that can be set
+// This value is the sleep time for the AT
+//Set the time interval for WDT timer, WDT will trigger every N secs you configure here to check for the reed switch state
+//If you keep this interval longer, state changes between the interval will be lost. I havent seen any difference in power consumption so i leave it at 0.5 sec
+#define SLEEP_FOREVER  128
+#define SLEEP_016MS    (period_t)0
+#define SLEEP_125MS    (1<<WDP1) | (1<<WDP0)
+#define SLEEP_250MS    (1<<WDP2)
+#define SLEEP_500MS    (1<<WDP2) | (1<<WDP0)
+#define SLEEP_1SEC     (1<<WDP2) | (1<<WDP1)
+#define SLEEP_2SEC     (1<<WDP2) | (1<<WDP1) | (1<<WDP0)
+#define SLEEP_4SEC     (1<<WDP3)
+#define SLEEP_8SEC     (1<<WDP3) | (1<<WDP0)
+
 //Types of messages sent to the signal pins
 #define WAKEUP 1 // I am alive message
 #define SENSOR_OPEN 2 //Sensor open message
@@ -131,14 +145,7 @@ void setup()
   bit_set(PORTB, BIT(SIGNAL_PIN1)); //Write initial values of HIGH on PB2
   bit_set(PORTB, BIT(SWITCH_INPUT1));//enable pull up on PB3
   
-  // prescale WDT timer . See section Section 8.5.2 Table 8-2 in datasheet of t13A
-  //Set the time interval for WDT timer, WDT will trigger every N secs you configure here to check for the reed switch state
-  //If you keep this interval longer, state changes between the interval will be lost. I havent seen any difference in power consumption so i leave it at 0.5 sec
-  //WDTCR = (1<<WDP2);// 0.25 sec
-  WDTCR = ((1<<WDP2) | (1<<WDP0));// 0.5 sec
-  //WDTCR = ((1<<WDP2) | (1<<WDP1));// 1 sec
-  //WDTCR = ((1<<WDP2) | (1<<WDP1) | (1<<WDP0));// 2 sec
-  //WDTCR = (1<<WDP3) ;// 4 sec
+  WDTCR = SLEEP_500MS;
   
   // Enable watchdog timer interrupts
   WDTCR |= (1<<WDTIE);

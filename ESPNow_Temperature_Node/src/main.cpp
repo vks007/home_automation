@@ -86,11 +86,11 @@ void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
 
 void printInitInfo()
 {
-  DPRINTLN("Starting up as a ESPNow Temperature sensor");
+  DPRINTFLN("Starting up as device:%s",DEVICE_NAME);
   #if USING(SECURITY)
-    DPRINTLN("Security ON");
+    DPRINTLN("Security status ON");
   #else
-    DPRINTLN("Security OFF");
+    DPRINTLN("Security status OFF");
   #endif
   String wifiMacString = WiFi.macAddress();
   // wifiMacString.replace(":","");
@@ -101,6 +101,8 @@ void printInitInfo()
 
 }
 
+ADC_MODE(ADC_VCC);             /* measure Vcc */
+// See solution to measure Vcc as well as sensor value on A0 here : https://arduino.stackexchange.com/questions/52952/read-both-battery-voltage-and-analog-sensor-value-with-nodemcu-esp8266
 
 void setup() {
   //Init Serial Monitor
@@ -152,17 +154,21 @@ void loop() {
       myData.floatvalue1 = sensors.getTempCByIndex(0); // get temperature reading for the first sensor
     DPRINT("Temp:");DPRINTLN(myData.floatvalue1);
     
-    //measure battery voltage on ADC pin , average it over 10 readings
-    averager<int> avg_batt_volt;
-    for(short i=0;i<10;i++)
-    {
-      avg_batt_volt.append(analogRead(A0));
-      delay(5);
-    }
-    myData.intvalue1 = avg_batt_volt.getAverage(); // assigning this just for debug purposes
+    // //measure battery voltage on ADC pin , average it over 10 readings
+    // averager<int> avg_batt_volt;
+    // int temp = 0;
+    // for(short i=0;i<10;i++)
+    // {
+    //   temp = analogRead(PIN_A0);
+    //   DPRINT("A0:");DPRINTLN(temp);
+    //   avg_batt_volt.append(temp);
+    //   delay(250);
+    // }
+    // myData.intvalue1 = avg_batt_volt.getAverage(); // assigning this just for debug purposes
+    // float batt_level = (avg_batt_volt.getAverage()/1023.0)* RESISTOR_CONST;
 
-    float batt_level = (avg_batt_volt.getAverage()/1023.0)* RESISTOR_CONST;
-    myData.floatvalue2 = batt_level;
+
+    myData.floatvalue2 = ESP.getVcc()/1000.0; // get the battery voltage and convert from millivolts to volts
     DPRINT("Battery:");DPRINTLN(myData.floatvalue2);
 
     //Set other values to send
@@ -174,7 +180,7 @@ void loop() {
     #else
       strcpy(myData.device_name,DEVICE_NAME);
     #endif
-//    myData.intvalue1 = 0;
+    myData.intvalue1 = SLEEP_DURATION; // for debugging purposes
     myData.intvalue2 = 0;
     myData.intvalue3 = 0;
     myData.intvalue4 = 0;

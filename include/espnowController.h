@@ -79,7 +79,28 @@ enum	esp_now_role	{
 };
 #endif
 // ************ HASH DEFINES *******************
- 
+
+
+  
+/*
+* Maps the role Id to role name
+* return type : const char*
+*/
+const char* map_role(short role_type) {
+  switch (role_type) {
+    case ESP_NOW_ROLE_IDLE:
+      return "IDLE";
+    case ESP_NOW_ROLE_CONTROLLER:
+      return "CONTROLLER";
+    case ESP_NOW_ROLE_SLAVE:
+      return "SLAVE";
+    case ESP_NOW_ROLE_COMBO:
+      return "COMBO";
+    default:
+      return "UNKNOWN";
+  }
+}
+
 /*
 * Gets the WiFi channel of the SSID of your router, It has to be on the same channel as what the Slave is on
 * While theritically it should be possible for WiFi and ESPNow to work on different channels but it seems due to some bug (or behavior) this isnt possible with espressif
@@ -283,7 +304,7 @@ bool refreshPeer(uint8_t peerAddress[],const uint8_t key[],esp_now_role role)
     uint8_t *peerCheck = esp_now_fetch_peer(true);
     if (peerCheck != nullptr)
       {DPRINTF("Added peer: %02X:%02X:%02X:%02X:%02X:%02X on channel:%u",peerCheck[0],peerCheck[1],peerCheck[2],peerCheck[3],peerCheck[4],peerCheck[5],ch);
-        DPRINTFLN(" with role:%u",role);
+        DPRINTFLN(" with role:%s",map_role(role));
       }
     else
       {DPRINTLN("Failed to set the peer");}
@@ -368,15 +389,15 @@ bool sendESPnowMessage(espnow_message *myData,uint8_t peerAddress[], short retri
           // // See if we are on the right channel, it might have changed since last time we wrote the same in EEPROM memory
           // // Do it only once in the cycle to send a message else it consumes battery every time the ESP tries to send in case
           // // there is permanent error in sending a message - eg. in case the Slave isnt available
-          // #if USING(EEPROM_STORE)
-          // if(!channelRefreshed)
-          // {
-          //     uint8_t ch = refresh_espnow_channel(ssid,true);
-          //     if(ch != 0)//force the channel refresh
-          //       set_wifi_channel(ch);
-          //     channelRefreshed = true;// this will enable refreshing of channel only once in a cycle, unless the flag is again reset by the calling code
-          // }
-          // #endif
+          #if USING(EEPROM_STORE)
+          if(!channelRefreshed)
+          {
+              uint8_t ch = refresh_espnow_channel(ssid,true); //force the channel refresh
+              if(ch != 0)
+                set_wifi_channel(ch);
+              channelRefreshed = true;// this will enable refreshing of channel only once in a cycle, unless the flag is again reset by the calling code
+          }
+          #endif
       }
     }
     else

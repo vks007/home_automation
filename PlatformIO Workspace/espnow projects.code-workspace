@@ -29,6 +29,13 @@
 		},
 		{
 			"path": "../Water Level Controller without Hub/espnow_level_controller"
+		},
+		{
+			"name": "tyua_esphome_test",
+			"path": "../../Sketches/Tuya/tyua_esphome_test"
+		},
+		{
+			"path": "../EspNow Vibration Sensor"
 		}
 	],
 	"settings": {}

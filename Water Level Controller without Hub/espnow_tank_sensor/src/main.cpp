@@ -28,8 +28,6 @@
 #endif
 
 // ************ HASH DEFINES *******************
-#define RESISTOR_CONST 4.59 // constant obtained by Resistor divider network. Vbat----R1---R2---GND . Const = (R1+R2)/R2
-        // I have used R1 = 968K , R2=265K. calc factor comes to 4.61 but actual measurements gave me a more precise value of 4.59
 // ************ HASH DEFINES *******************
 
 // ************ GLOBAL OBJECTS/VARIABLES *******************
@@ -103,8 +101,8 @@ void setup() {
   DBEGIN(115200);
   DPRINTLN();
   printInitInfo();
-  pinMode(SENSOR_PIN,INPUT_PULLUP);
-
+  pinMode(SENSOR_PIN,INPUT); // the pin has an external pull up resistor for better noise immunity
+  pinMode(WATER_PRESENCE_SENSOR_PIN,INPUT); // the pin has an external pull up resistor for better noise immunity
 
   DPRINTLN("initializing espnow");
 //  initilizeESP(ssid,MY_ROLE);
@@ -133,8 +131,10 @@ void setup() {
 
 bool sendMessage()
 {
-    myData.intvalue1 = digitalRead(SENSOR_PIN);
+    myData.intvalue1 = !digitalRead(SENSOR_PIN);
     DPRINTFLN("sensor value: %d",myData.intvalue1);
+    myData.intvalue2 = !digitalRead(WATER_PRESENCE_SENSOR_PIN);
+    DPRINTFLN("water presence sensor value: %d",myData.intvalue2);
 
     //measure battery voltage on ADC pin , average it over some readings
     // NOTE: Calling analogRead() too frequently causes WiFi to stop working. When WiFi is under operation, 
@@ -147,10 +147,10 @@ bool sendMessage()
     }
 
     short analog_value = avg_batt_volt.getAverage();
-    float batt_level = (analog_value/1023.0)* RESISTOR_CONST;
+    float batt_level = (analog_value/1023.0)* BATT_RESISTOR_CONST;
     myData.floatvalue1 = batt_level;
     DPRINT("Battery:");DPRINTLN(myData.floatvalue1);
-    myData.intvalue2 = analog_value; //just for debugging purposes
+    myData.intvalue3 = analog_value; //just for debugging purposes
 
     //Set other values to send
     // If devicename is not given then generate one from MAC address stripping off the colon
@@ -161,7 +161,6 @@ bool sendMessage()
     #else
       strcpy(myData.device_name,DEVICE_NAME);
     #endif
-    myData.intvalue3 = 0;
     myData.intvalue4 = 0;
     myData.floatvalue2 = 0;
     myData.floatvalue3 = 0;

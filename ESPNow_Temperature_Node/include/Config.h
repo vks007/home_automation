@@ -18,7 +18,7 @@
   #define WiFi_SSID               primary_ssid //from secrets.h
   #define WiFi_SSID_PSWD          primary_ssid_pswd // used only for OTA updates else this is not used , from secrets.h
   #define MIN_TEMP                0 // minimum temprature which you want to measure, this would be the lowest value it will send
-  #define DEFAULT_CHANNEL         1
+  #define DEFAULT_CHANNEL         11
   #define SLEEP_DURATION          10 // sleep time interval in seconds , see notes on its usage, this isnt working well
 #elif (DEVICE == SOLAR_GEYSER_SENSOR)
   #define SERIAL_DEBUG            IN_USE
@@ -33,8 +33,8 @@
   #define WiFi_SSID               primary_ssid //from secrets.h
   #define WiFi_SSID_PSWD          primary_ssid_pswd // used only for OTA updates else this is not used , from secrets.h
   #define MIN_TEMP                0 // minimum temprature which you want to measure, this would be the lowest value it will send and also send it when it has invalid readings
-  #define DEFAULT_CHANNEL         1
-  #define SLEEP_DURATION          60 // sleep time interval in seconds , see notes on its usage, this isnt working well
+  #define DEFAULT_CHANNEL         11
+  #define SLEEP_DURATION          120 // sleep time interval in seconds , see notes on its usage, this isnt working well
 #else
   #error "Device type not found. Have you passed DEVICE id in platform.ini as build flag. See Config.h for all DEVICES"
 #endif
