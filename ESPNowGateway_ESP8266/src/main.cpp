@@ -220,16 +220,29 @@ bool reconnectMQTT()
 }
 
 /*
- * publishes a string to MQTT
+ * Publishes a string message to MQTT , returns true if message was published successfully else false
+ * IMPORTANT : Encountered a strange issue where the device was more than MAX_DEVICE_ID_LEN characters long, this caused the MQTT to return success for publish method but the message wasnt published
+ * In the next step the MQTT conneciton was lost and it was re-established. So be careful of the length of the device name from the client side. Sample message below:  terrace_flow_meter is more than MAX_DEVICE_ID_LEN
+ *  const char* json_msg = R"({"gateway":"gateway-ff","type":0,"mac":"62:01:94:FF:01:08","id":2,"device":"terrace_flow_meter","ival1":0,"ival2":0,"ival3":0,"ival4":0,"fval1":0,"fval2":0,"fval3":0,"fval4":0,"char1":"","char2":"1.0 Jan 11 2025"})";
+ * This bug doesnt make sense as this finally is only a string in this method and the message was within MQTT_MAX_PACKET_SIZE (256). Didnt have time to debug this further so left it
+ * The maximum length of a message that can be published on MQTT depends on the MQTT broker and the client library you are using. For the ESP8266 with the PubSubClient library, the default maximum message size is 256 bytes
+ * #define MQTT_MAX_PACKET_SIZE 256 can be changed to #define MQTT_MAX_PACKET_SIZE 1024
+ * Also be aware of : MAX_MSG_BUFFER_SIZE : This is the max size of the MQTT packet buffer, it includes topic name+payload+header bytes, set your payload max lenn accordingly using MAX_MESSAGE_LEN below
+ * MAX_MESSAGE_LEN : defines max message length of payload message. Included space for 100 bytes for topic name + header
  */
 bool publishToMQTT(const char msg[],const char topic[], bool retain)
 {
+  if(strlen(msg) > MQTT_MAX_PACKET_SIZE)
+  {
+    DPRINTFLN("publishToMQTT- Failed,Message too long:%u",strlen(msg));
+    return false;
+  }
   DPRINTFLN("msg:%s",msg);
   if(client.connected())
   {
     if(client.publish(topic,msg,retain))
     {
-      DPRINT("publishToMQTT-Published:");DPRINTLN(msg);
+      DPRINTLN("publishToMQTT-Published.");
       if(mqtt_publish_fails>0)
         mqtt_publish_fails = 0;//reset the counter
       return true;
@@ -256,7 +269,7 @@ bool publishToMQTT(const char msg[],const char topic[], bool retain)
 }
 
 /*
- * Creates a json string from the espnow message and publishes it to a MQTT queue
+ * Creates a json string from the espnow message and publishes it to a MQTT queue. Truncates the message if it exceeds MAX_MESSAGE_LEN
  * Returns true if message was published successfully else false
  */
 bool publishToMQTT(espnow_message msg) {
@@ -292,11 +305,40 @@ bool publishToMQTT(espnow_message msg) {
   msg_json["fval4"] = msg.floatvalue4;
   msg_json["char1"] = msg.chardata1;
   msg_json["char2"] = msg.chardata2;
-  
-  String str_msg="";
-  serializeJson(msg_json,str_msg);
-  DPRINTF("Going to publish message with len:%u\n",measureJson(msg_json));
-  return publishToMQTT(str_msg.c_str(),final_publish_topic,false);
+
+  // Serialize the JSON document to a string
+  String str_msg;
+  serializeJson(msg_json, str_msg);
+
+  // Check if the length exceeds MAX_MESSAGE_LEN
+  if (str_msg.length() >= MAX_MESSAGE_LEN) {
+    // Calculate the excess length
+    int excess_length = str_msg.length() - MAX_MESSAGE_LEN;
+
+    // Truncate the char2 field by the excess length if it is within the limit of 64 characters
+    if (excess_length < 64) {
+      msg.chardata2[strlen(msg.chardata2) - excess_length] = '\0'; // Truncate the char2 field
+      excess_length = 0;
+    }
+    else {
+      // Truncate the char2 entirely and add a null terminator
+      msg.chardata2[0] = '\0';
+      excess_length = excess_length - 64;
+    }
+    if (excess_length < 64) {
+      msg.chardata1[strlen(msg.chardata2) - excess_length] = '\0'; // Truncate the char2 field
+      excess_length = 0;
+    }
+    // not proceeding with further truncation as there is no possibility of the string exceeding further
+
+    // Re-serialize the JSON document to a string
+    msg_json["char2"] = msg.chardata2;
+    str_msg = "";
+    serializeJson(msg_json, str_msg);
+  }
+
+  DPRINTF("Going to publish message with len:%u\n", str_msg.length());
+  return publishToMQTT(str_msg.c_str(), final_publish_topic, false);
 }
 
 #if USING(MOTION_SENSOR)
