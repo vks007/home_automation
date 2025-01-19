@@ -199,7 +199,8 @@ uint8_t refresh_espnow_channel(const char ssid[MAX_SSID], bool forceChannelRefre
       DPRINTFLN("New WiFi channel set as:%d",getWiFiChannel());
     }
     else
-      DPRINTFLN("WiFi channel left unchanged to:%d",new_channel);
+    {
+      DPRINTFLN("WiFi channel left unchanged to:%d",new_channel);}
   }
   else
     DPRINTLN("Failed to get a valid channel for " && ssid);

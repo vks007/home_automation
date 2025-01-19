@@ -4,6 +4,9 @@
 #include "myutils.h"
 
 #define OTA_MSG "OTA" // ota message , if received triggers an OTA mode
+#define MAX_DEVICE_NAME_LEN 15 // max length of device name
+#define MAX_CHAR_DATA_LEN 64 // max length of character data in the espnow_message struct
+
 typedef enum {
     ESPNOW_SENSOR     = 0, // messages sent by sensor devices with their data
     ESPNOW_OTA        = 1, // messages sent by any device on OTA state
@@ -33,7 +36,7 @@ typedef struct espnow_device
 //typedef struct __attribute__((packed)) espnow_message{
 typedef struct espnow_message{
   char sender_mac[18]=""; // contains the mac addresss of the sender in the format "XX:XX:XX:XX:XX:XX"
-  char device_name[16]="";// contains unique device name, falls back to the mac address without colon if device id is not provided
+  char device_name[MAX_DEVICE_NAME_LEN+1]="";// contains unique device name, falls back to the mac address without colon if device id is not provided
   unsigned long message_id; //unique message id generated for each message
   msg_type_t msg_type;
   int intvalue1; // int any data

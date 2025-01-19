@@ -4,18 +4,20 @@
 
 #ifndef MYUTILS_H
 #define MYUTILS_H
-
+#include <limits.h> // For INT_MAX
+const float MAX_FLOAT = std::numeric_limits<float>::max();
 
 /*
- * This function provides a safe way to introduce delay by calling yield() every 10ms
+ * This function provides a safe way to introduce delay by calling yield() every Xms
  * Using this function will eliminate the chance of triggering a WDT
  * It seems this function may not be required in most cases, read here : https://www.sigmdel.ca/michel/program/esp8266/arduino/watchdogs_en.html
  */
 void safedelay(unsigned int delay_time) {
-  short n = delay_time / 10;//gives the no of times to loop with 10ms delay
-  short remainder = delay_time % 10; //gives the remainder to give additional delay after looping n times
+  short interval = 5; // 5ms interval
+  short n = delay_time / interval;//gives the no of times to loop with 10ms delay
+  short remainder = delay_time % interval; //gives the remainder to give additional delay after looping n times
   for(int i = 0; i < n; i++) {
-    delay(10);
+    delay(interval);
     yield();
   }
   delay(remainder);
@@ -34,11 +36,21 @@ String IpAddress2String(const IPAddress& ipAddress)
 }
 
 
+/*
+Function to map any values in a range.
+*/
 template <class X, class M, class N, class O, class Q>
 X map_Generic(X x, M in_min, N in_max, O out_min, Q out_max){
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
+/*
+Function to map float values in a range . map only operates on int values
+*/
+float mapf(float x, float in_min, float in_max, float out_min, float out_max)
+{
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
 
 /*
  * Converts milli seconds into a readable short string in the format days hour:min:sec ago. example : 5 days 04:09:16 ago
@@ -295,6 +307,15 @@ String formatTime(unsigned long sec)
     }
   }
   return String(hr) + ":" + String(mn) + ":" + String(sec);
+}
+
+//Converts an unsigned long to a Int, if the value is greater than INT_MAX then return INT_MAX
+int safeConvertUnsignedLongToInt(unsigned long value) {
+    if (value > INT_MAX) {
+        return INT_MAX;
+    } else {
+        return static_cast<int>(value);
+    }
 }
 
 #endif
