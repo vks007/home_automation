@@ -1,15 +1,28 @@
 
 /*
- * Sketch for temperatire sensor using DS18B20 sensor. This device communicates over ESPNow and not in WiFi. 
- * The sketch waks up , supplies power to the senssor , reasa the temperature, creates a structure with all info and sends to the reciever (slave) ESP
- * It then goes to sleep for a defined period. In sleep mode a barebone ESP12 consumes ~20uA current and hence can run on batteries for a lond time.
+ * Sketch for temperature sensor using DS18B20 sensor. This device communicates over ESPNow and not in WiFi. 
+ * The sketch wakes up, supplies power to the sensor , reads the temperature, creates a structure with all info and sends to the espnow reciever gateway
+ * The gateway is connected to the WiFi and sends the data to the MQTT broker which is in turn integrated with Home Assistant
+ * It then goes to sleep for a defined period. In sleep mode a barebone ESP12 consumes ~20uA current and hence can run on batteries for a long time.
  * Uses some header files from the includes folder (see include folder for those files)
- * Features:
- * - Uses Deep Sleep to conserver power for most of the time
- * 
+ * Data Format: data is transmitted in the form of a structure espnow_message which has the following fields
+ * espnow_message.sender_mac : mac of this device
+ * espnow_message.message_id : uptime of the device in milliseconds
+ * espnow_message.device_name : name of the device
+ * espnow_message.intvalue1 : sleep duration
+ * espnow_message.intvalue2 : not used
+ * espnow_message.intvalue3 : not used
+ * espnow_message.intvalue4 : not used
+ * espnow_message.floatvalue1 : temperature reading
+ * espnow_message.floatvalue2 : battery voltage reading
+ * espnow_message.floatvalue3 : not used
+ * espnow_message.floatvalue4 : not used
+ * espnow_message.chardata1 : not used
+ * espnow_message.chardata2 : not used
  * 
  * TO DO :
  * - have multiple slaves to which a message can be tranmitted in the order of preference
+ * - Implement storing of message_id in the RTC memory so that it is not lost on restart
  */
 //Specify the sensor this is being compiled for in platform.ini, see Config.h for list of all devices this can be compiled for
 
@@ -19,30 +32,29 @@
 #include "Debugutils.h"
 #include <ESP8266WiFi.h>
 #include <espnow.h>
-#include "espnowMessage.h" // for struct of espnow message
-#include "myutils.h"
+#include "espnowMessage.h" // for espnow capabilities, has wrapper functions to send and receive messages
+#include "myutils.h" // for utility functions
 #include <DallasTemperature.h>
 #include <OneWire.h>
-#include <averager.h>
+#include <averager.h> // for averaging the battery voltage readings
 #if USING(EEPROM_STORE)
 #define EEPROM_SIZE 16 // number of bytes to be allocated to EEPROM
 #include <EEPROM.h> // to store WiFi channel number to EEPROM
 #endif
 
 // ************ HASH DEFINES *******************
-#define MAX_COUNT 5000 // No of times a message is retries to be sent before dropping the message
-#define ONE_WIRE_BUS 4 // gets readings from the data pin of DS18B20 sensor , there should be a pull up from this pin to Vcc
-#define RESISTOR_CONST 5.156 // constant obtained by Resistor divider network. Vbat----R1---R2---GND . Const = (R1+R2)/R2
-        // I have used R1 = 1M , R2=270K. calc factor comes to 4.7 but actual measurements gave me a more precise value of 5.156
+#define MAX_COUNT 5000 // No of times to loop in testing mode and send the message
+#define VERSION "1.1"
 // ************ HASH DEFINES *******************
 
 // ************ GLOBAL OBJECTS/VARIABLES *******************
 const char* ssid = WiFi_SSID; // comes from config.h
 const char* password = WiFi_SSID_PSWD; // comes from config.h
-const uint64_t sleep_time = SLEEP_DURATION * 1e6; // sleep time in uS for the ESP in between readings
+//const uint64_t sleep_time = SLEEP_DURATION * 1e6; // sleep time in uS for the ESP in between readings
+const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the strings adjacent to each other become pasted together as one long string
 espnow_message myData;
 char device_id[13];
-OneWire oneWire(ONE_WIRE_BUS);
+OneWire oneWire(TEMPERATURE_SENSOR_PIN);
 DallasTemperature sensors(&oneWire);            // Pass the oneWire reference to Dallas Temperature.
 #if USING(SECURITY)
 uint8_t kok[16]= PMK_KEY_STR;//comes from secrets.h
@@ -54,14 +66,6 @@ uint8_t key[16] = LMK_KEY_STR;// comes from secrets.h
 
 // MAC Address , This should be the address of the softAP (and NOT WiFi MAC addr obtained by WiFi.macAddress()) if the Receiver uses both, WiFi & ESPNow
 // You can get the address via the command WiFi.softAPmacAddress() , usually it is one decimal no after WiFi MAC address
-
-/*
-Function to map float values in a range . map only operates on int values
-*/
-float mapf(float x, float in_min, float in_max, float out_min, float out_max)
-{
-  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
-}
 
 
 /*
@@ -86,6 +90,7 @@ void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
 
 void printInitInfo()
 {
+  DPRINTFLN("Version:%s",compile_version);
   DPRINTFLN("Starting up as device:%s",DEVICE_NAME);
   #if USING(SECURITY)
     DPRINTLN("Security status ON");
@@ -93,15 +98,10 @@ void printInitInfo()
     DPRINTLN("Security status OFF");
   #endif
   String wifiMacString = WiFi.macAddress();
-  // wifiMacString.replace(":","");
-  // snprintf(device_id, 13, "%s", wifiMacString.c_str());
-  // strcpy(device_id,wifiMacString.c_str());
-  // DPRINTF("deviceid:%s\n",device_id);
   DPRINTFLN("This device's MAC add: %s",wifiMacString.c_str());
-
 }
 
-ADC_MODE(ADC_VCC);             /* measure Vcc */
+//ADC_MODE(ADC_VCC);             /* measure Vcc */
 // See solution to measure Vcc as well as sensor value on A0 here : https://arduino.stackexchange.com/questions/52952/read-both-battery-voltage-and-analog-sensor-value-with-nodemcu-esp8266
 
 void setup() {
@@ -110,17 +110,15 @@ void setup() {
   DPRINTLN();
   printInitInfo();
   pinMode(SENSOR_POWER_PIN,OUTPUT);
+  digitalWrite(SENSOR_POWER_PIN,HIGH);//set PIN high to given power to the sensor module
   sensors.begin();//start temperature sensor
-
-  //Initialize EEPROM , this is used to store the channel no for espnow in the memory, only stored when it changes which is rare
-  EEPROM.begin(16);// 16 is the size of the EEPROM to be allocated, 16 is the minimum
 
   DPRINTLN("initializing espnow");
   #if USING(EEPROM_STORE)
     //Initialize EEPROM , this is used to store the channel no for espnow in the memory, only stored when it changes which is rare
     EEPROM.begin(EEPROM_SIZE);// size of the EEPROM to be allocated, 16 is the minimum
     initilizeESP(ssid,MY_ROLE,DEFAULT_CHANNEL);
-  #else
+  #else // this will not reply on a SSID and channel stored in EEPROM
     initilizeESP(DEFAULT_CHANNEL,MY_ROLE,WIFI_STA);
   #endif
 
@@ -136,42 +134,44 @@ void setup() {
   #else
     refreshPeer(gatewayAddress, NULL,RECEIVER_ROLE);
   #endif
-
-  digitalWrite(SENSOR_POWER_PIN,HIGH);//set PIN high to given power to the sensor module
-//  DPRINT("setup complete:");DPRINTLN(millis());
-
 }
 
+float getBatteryVoltage()
+{
+  averager<int> avg_batt_volt;
+  int temp = 0;
+  for(short i=0;i<5;i++)
+  {
+    temp = analogRead(PIN_A0);
+    //DPRINT("A0:");DPRINTLN(temp);
+    avg_batt_volt.append(temp);
+    delay(5);
+  }
+  return (avg_batt_volt.getAverage()/1023.0)* RESISTOR_CONST;
+}
+
+float getTemperature()
+{
+  float temp = 0;
+  sensors.requestTemperatures(); // Send the command to get temperatures
+  // If the sensor is disconnected it gives junk negative values, to eliminate them I am setting the value to MIN_TEMP in that case
+  if(sensors.getTempCByIndex(0) < MIN_TEMP)
+    temp = MIN_TEMP;
+  else
+    temp = sensors.getTempCByIndex(0); // get temperature reading for the first sensor
+  DPRINT("Temp:");DPRINTLN(myData.floatvalue1);
+  return temp;
+}
 
 void loop() {
-  for(short i = 0;i<MAX_COUNT;i++)
+  for(short i = 0;i<MAX_COUNT;i++) // this loop is for testing mode only, in normal case it will send the message only once
   {
-    sensors.requestTemperatures(); // Send the command to get temperatures
-    // If the sensor is disconnected it gives junk negative values, to eliminate them I am setting the value to MIN_TEMP in that case
-    if(sensors.getTempCByIndex(0) < MIN_TEMP)
-      myData.floatvalue1 = MIN_TEMP;
-    else
-      myData.floatvalue1 = sensors.getTempCByIndex(0); // get temperature reading for the first sensor
-    DPRINT("Temp:");DPRINTLN(myData.floatvalue1);
-    
-    // //measure battery voltage on ADC pin , average it over 10 readings
-    // averager<int> avg_batt_volt;
-    // int temp = 0;
-    // for(short i=0;i<10;i++)
-    // {
-    //   temp = analogRead(PIN_A0);
-    //   DPRINT("A0:");DPRINTLN(temp);
-    //   avg_batt_volt.append(temp);
-    //   delay(250);
-    // }
-    // myData.intvalue1 = avg_batt_volt.getAverage(); // assigning this just for debug purposes
-    // float batt_level = (avg_batt_volt.getAverage()/1023.0)* RESISTOR_CONST;
-
-
-    myData.floatvalue2 = ESP.getVcc()/1000.0; // get the battery voltage and convert from millivolts to volts
+    myData.floatvalue1 = getTemperature();
+    myData.floatvalue2 = getBatteryVoltage();
     DPRINT("Battery:");DPRINTLN(myData.floatvalue2);
 
     //Set other values to send
+    strcpy(myData.sender_mac,WiFi.macAddress().c_str()); //WiFi.softAPmacAddress()
     // If devicename is not given then generate one from MAC address stripping off the colon
     #ifndef DEVICE_NAME
       String wifiMacString = WiFi.macAddress();
@@ -186,18 +186,21 @@ void loop() {
     myData.intvalue4 = 0;
     myData.floatvalue3 = 0;
     myData.floatvalue4 = 0;
-    strcpy(myData.chardata1,"");
-    strcpy(myData.chardata2,"");
+    myData.chardata1[MAX_CHAR_DATA_LEN-1] = '\0'; // Ensure null termination (index starts from zero)
+    short str_len = strlen(compile_version);
+    if (str_len > MAX_CHAR_DATA_LEN-1)
+        str_len = MAX_CHAR_DATA_LEN-1;
+    strncpy(myData.chardata2, compile_version, str_len);
+    myData.chardata2[str_len] = '\0'; // Ensure null termination
     myData.message_id = millis();//there is no use of message_id so using it to send the uptime
-      
-    //int result = esp_now_send(gatewayAddress, (uint8_t *) &myData, sizeof(myData));
+
     bool result = sendESPnowMessage(&myData,gatewayAddress,1,true);
     if (result == 0) 
       {DPRINTLN("Delivered with success");}
     else 
       {DPRINTLN("Message not delivered");}
     
-    #if(USING(TESTING)) // If we are testing then it sends a message MAX_COUNT times
+    #if(USING(TESTING_MODE)) // If we are testing then it sends a message MAX_COUNT times
     {
       delay(15000);
     }
