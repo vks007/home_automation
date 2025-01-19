@@ -24,8 +24,10 @@
  * - have multiple slaves to which a message can be tranmitted in the order of preference
  * - Implement storing of message_id in the RTC memory so that it is not lost on restart
  */
-//Specify the sensor this is being compiled for in platform.ini, see Config.h for list of all devices this can be compiled for
+//ADC_MODE(ADC_VCC);             /* measure Vcc */
+// See solution to measure Vcc as well as sensor value on A0 here : https://arduino.stackexchange.com/questions/52952/read-both-battery-voltage-and-analog-sensor-value-with-nodemcu-esp8266
 
+//Specify the sensor this is being compiled for in platform.ini, see Config.h for list of all devices this can be compiled for
 #include <Arduino.h>
 #include "secrets.h"
 #include "Config.h"
@@ -50,7 +52,7 @@
 // ************ GLOBAL OBJECTS/VARIABLES *******************
 const char* ssid = WiFi_SSID; // comes from config.h
 const char* password = WiFi_SSID_PSWD; // comes from config.h
-//const uint64_t sleep_time = SLEEP_DURATION * 1e6; // sleep time in uS for the ESP in between readings
+const uint64_t sleep_time = SLEEP_DURATION * 1e6; // sleep time in uS for the ESP in between readings
 const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the strings adjacent to each other become pasted together as one long string
 espnow_message myData;
 char device_id[13];
@@ -68,9 +70,14 @@ uint8_t key[16] = LMK_KEY_STR;// comes from secrets.h
 // You can get the address via the command WiFi.softAPmacAddress() , usually it is one decimal no after WiFi MAC address
 
 
-/*
- * Callback when data is sent , It sets the bResultReady flag to true on successful delivery of message
- * The flag is set to false in the main loop where data is sent and then the code waits to see if it gets set to true, if not it retires to send
+/**
+ * @brief Callback when data is sent.
+ *
+ * This function is called when data is sent. It sets the bResultReady flag to true on successful delivery of the message.
+ * The flag is set to false in the main loop where data is sent and then the code waits to see if it gets set to true, if not it retries to send.
+ *
+ * @param mac_addr The MAC address of the receiver.
+ * @param status The status of the data sent (0 for success, non-zero for failure).
  */
 esp_now_send_cb_t OnDataSent([](uint8_t *mac_addr, uint8_t status) {
   deliverySuccess = status;
@@ -79,8 +86,14 @@ esp_now_send_cb_t OnDataSent([](uint8_t *mac_addr, uint8_t status) {
   bResultReady = true;
 });
 
-/*
- * Callback called when a message is received , nothing to do here for now , just log message
+/**
+ * @brief Callback called when a message is received.
+ *
+ * This function is called when a message is received. It logs the received message.
+ *
+ * @param mac The MAC address of the sender.
+ * @param incomingData The incoming data.
+ * @param len The length of the incoming data.
  */
 void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
   espnow_message msg;
@@ -88,6 +101,11 @@ void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
   DPRINTF("OnDataRecv:%lu,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
 };
 
+/**
+ * @brief Prints initialization information.
+ *
+ * This function prints the version and device name during initialization.
+ */
 void printInitInfo()
 {
   DPRINTFLN("Version:%s",compile_version);
@@ -101,9 +119,12 @@ void printInitInfo()
   DPRINTFLN("This device's MAC add: %s",wifiMacString.c_str());
 }
 
-//ADC_MODE(ADC_VCC);             /* measure Vcc */
-// See solution to measure Vcc as well as sensor value on A0 here : https://arduino.stackexchange.com/questions/52952/read-both-battery-voltage-and-analog-sensor-value-with-nodemcu-esp8266
-
+/**
+ * @brief Sets up the device.
+ *
+ * This function initializes the serial monitor, sets up the sensor power pin, starts the temperature sensor,
+ * initializes ESP-NOW, and registers callbacks for data sent and received events.
+ */
 void setup() {
   //Init Serial Monitor
   DBEGIN(115200);
@@ -136,6 +157,14 @@ void setup() {
   #endif
 }
 
+/**
+ * @brief Gets the battery voltage.
+ *
+ * This function reads the analog value from the A0 pin, averages it over 5 readings,
+ * and converts it to the corresponding battery voltage.
+ *
+ * @return The battery voltage.
+ */
 float getBatteryVoltage()
 {
   averager<int> avg_batt_volt;
@@ -150,6 +179,14 @@ float getBatteryVoltage()
   return (avg_batt_volt.getAverage()/1023.0)* RESISTOR_CONST;
 }
 
+/**
+ * @brief Gets the temperature from the sensor.
+ *
+ * This function requests the temperature from the sensor and returns the temperature reading.
+ * If the sensor is disconnected and gives junk negative values, the function returns MIN_TEMP.
+ *
+ * @return The temperature reading.
+ */
 float getTemperature()
 {
   float temp = 0;
@@ -163,6 +200,12 @@ float getTemperature()
   return temp;
 }
 
+/**
+ * @brief Main loop function.
+ *
+ * This function runs the main loop, which reads the temperature and battery voltage,
+ * and sends the data to the ESP-NOW receiver gateway.
+ */
 void loop() {
   for(short i = 0;i<MAX_COUNT;i++) // this loop is for testing mode only, in normal case it will send the message only once
   {
