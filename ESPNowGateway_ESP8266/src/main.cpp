@@ -73,16 +73,12 @@ const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 
 #define STATE_TOPIC "/state" // end path of topic to publish state of the messages
 #define OTA_TOPIC "/ota" // end path of topic to publish ota messages
 #define ERROR_TOPIC "/error" // end path of topic to publish error messages
-#define QUEUE_LENGTH 50 // max no of messages the ESP should queue up before replacing them, limited by amount of free memory
+#define QUEUE_LENGTH 10 // max no of messages the ESP should queue up before replacing them, limited by amount of free memory
 #define MAX_MSG_BUFFER_SIZE 512 // max size of the MQTT packet buffer, it includes topic name+payload+header bytes, set your payload max lenn accordingly using MAX_MESSAGE_LEN below 
 #define MAX_MESSAGE_LEN 412 // defines max message length of payload message. Included space for 100 bytes for topic name + header
 #define HEALTH_INTERVAL 30e3 // interval is millisecs to publish health message for the gateway
 #ifndef ESP_OK
   #define ESP_OK 0 // This is defined for ESP32 but not for ESP8266 , so define it
-#endif
-// API_TIMEOUT is used to determine how long to wait for MQTT connection before restarting the ESP
-#ifndef API_TIMEOUT
-  #define API_TIMEOUT 600 // define default timeout of monitoring for MQTT connection if not defined.
 #endif
 #define MAX_MQTT_PUBLISH_FAILURES 5 //max no of times MQTT publishing can fail even though the MQTT client was connected beyond which ESP restart happens
 // ************ HASH DEFINES *******************
@@ -102,7 +98,7 @@ extern "C"
 }
 Pinger pinger;
 ezLED  statusLED(STATUS_LED);
-watchDog MQTT_wd = watchDog(API_TIMEOUT); // monitors the MQTT connection, if it is disconnected beyond API_TIMEOUT , it restarts ESP
+watchDog MQTT_wd = watchDog(); // monitors the MQTT connection, if it is disconnected beyond API_TIMEOUT , it restarts ESP
 //List of controllers(sensors) who will send messages to this receiver
 uint8_t controller_mac[][6] = CONTROLLERS; //from secrets.h
 /* example entry : 
@@ -430,7 +426,6 @@ bool publishHealthMessage(bool init=false)
     msg_json["mem_freeKB"] = serialized(String((float)gateway.free_mem_KB,0));//Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
     msg_json["msg_count"] = gateway.msg_count;
     msg_json["queue_len"] = gateway.queue_length;
-    float message_rate = (gateway.msg_count - last_message_count)/(float)(HEALTH_INTERVAL/(60*1000));//rate calculated over one minute
     last_message_count = gateway.msg_count;//reset the count
     msg_json["msg_rate"] = serialized(String(gateway.msg_rate,1));//format with 1 decimal places, Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
 
@@ -756,6 +751,70 @@ void update_motion_sensor()
 }
 #endif
 
+void do_ota_server()
+{
+  #if(USING(ESPNOW_OTA_SERVER))
+    if(esp_ota_device.ota_mode && !esp_ota_device.ota_done)
+    {
+      if(millis() < (start_time + esp_ota_device.duration*1000))
+      {
+        if((millis() - last_msg_sent_time) > esp_ota_device.interval)
+        {
+          myData.message_id = millis();
+          bool result = sendESPnowMessage(&myData,esp_ota_device.mac,0,false);
+          last_msg_sent_time = millis();
+          //yield();// trying this out to see if the MQTT disconect bug gets solved
+          if(result)
+          {
+            //DPRINTFLN("%lu: sent OTA message",myData.message_id);
+          }
+          else
+          {
+            DPRINTFLN("%lu: OTA message sending failed",myData.message_id);}
+        }
+      }
+      else
+      {
+        esp_ota_device.ota_mode = false;
+        esp_ota_device.ota_done = true;
+        delete_peer(esp_ota_device.mac);// now that we're done with OTA , delete the peer
+        DPRINTLN("OTA timed out without acknowlegdment from device");
+      }
+    }
+  #endif
+
+}
+
+void do_health_check()
+{
+  // try to publish health message irrespective of the state of espnow messages
+  if(millis() - last_time > HEALTH_INTERVAL)
+  {
+    if(initilized)
+    {
+      //publish the health message
+      publishHealthMessage();
+    }
+    else
+    // It might be possible when the ESP comes up MQTT is down, in that case an init message will not get published in setup()
+    // The statement below will check and publish the same , only once
+    {
+      if(publishHealthMessage(true))
+        initilized = true;
+    }
+    last_time = millis(); // This is reset irrespective of a successful publish else the main loop will continously try to publish this message
+  }
+}
+
+void do_queue_check()
+{
+  if(structQueue.isFull())
+  {
+    DPRINTLN("Queue Full, restarting ESP to see if the issue goes away, messages will be lost");
+    MQTT_wd.update(false,true); // ask the watchdog to restart the ESP
+  }
+}
+
 /*
  * runs the loop to check for incoming messages in the queue, picks them up and posts them to MQTT
  */
@@ -842,54 +901,9 @@ void loop() {
       }
     }
   }
-
-  // try to publish health message irrespective of the state of espnow messages
-  if(millis() - last_time > HEALTH_INTERVAL)
-  {
-    if(initilized)
-    {
-      //publish the health message
-      publishHealthMessage();
-    }
-    else
-    // It might be possible when the ESP comes up MQTT is down, in that case an init message will not get published in setup()
-    // The statement below will check and publish the same , only once
-    {
-      if(publishHealthMessage(true))
-        initilized = true;
-    }
-    last_time = millis(); // This is reset irrespective of a successful publish else the main loop will continously try to publish this message
-  }
+  do_health_check();
+  do_queue_check();
   statusLED.loop();
-
-  #if(USING(ESPNOW_OTA_SERVER))
-    if(esp_ota_device.ota_mode && !esp_ota_device.ota_done)
-    {
-      if(millis() < (start_time + esp_ota_device.duration*1000))
-      {
-        if((millis() - last_msg_sent_time) > esp_ota_device.interval)
-        {
-          myData.message_id = millis();
-          bool result = sendESPnowMessage(&myData,esp_ota_device.mac,0,false);
-          last_msg_sent_time = millis();
-          //yield();// trying this out to see if the MQTT disconect bug gets solved
-          if(result)
-          {
-            //DPRINTFLN("%lu: sent OTA message",myData.message_id);
-          }
-          else
-          {
-            DPRINTFLN("%lu: OTA message sending failed",myData.message_id);}
-        }
-      }
-      else
-      {
-        esp_ota_device.ota_mode = false;
-        esp_ota_device.ota_done = true;
-        delete_peer(esp_ota_device.mac);// now that we're done with OTA , delete the peer
-        DPRINTLN("OTA timed out without acknowlegdment from device");
-      }
-    }
-  #endif
+  do_ota_server();
 
 }

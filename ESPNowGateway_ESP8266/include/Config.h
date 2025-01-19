@@ -20,7 +20,7 @@
 
   #define MY_ROLE                 ESP_NOW_ROLE_SLAVE              // set the role of this device: CONTROLLER, SLAVE, COMBO
   #define RECEIVER_ROLE           ESP_NOW_ROLE_CONTROLLER              // set the role of the receiver
-  #define DEVICE_NAME             "gateway_ff" //no spaces as this is used in topic names too
+  #define DEVICE_NAME             "gateway_ff" //no spaces as this is used in topic names too , cannot be more than 15 chars
   #define MQTT_TOPIC              "home/espnow/" DEVICE_NAME
   #define MQTT_BASE_TOPIC          "home/espnow"
   #define ESP_IP_ADDRESS          IP_gateway_ff //from secrets.h\static_ipaddress.h
@@ -41,7 +41,7 @@
   //Turn features ON and OFF below ----------- end
   #define MY_ROLE                 ESP_NOW_ROLE_SLAVE              // set the role of this device: CONTROLLER, SLAVE, COMBO
   #define RECEIVER_ROLE           ESP_NOW_ROLE_CONTROLLER              // set the role of the receiver
-  #define DEVICE_NAME             "gateway_test" //no spaces as this is used in topic names too
+  #define DEVICE_NAME             "gateway_test" //no spaces as this is used in topic names too, cannot be more than 15 chars
   #define MQTT_TOPIC              "home/espnow/" DEVICE_NAME
   #define MQTT_BASE_TOPIC         "home/espnow"
   #define ESP_IP_ADDRESS          IP_gateway_test //from secrets.h\static_ipaddress.h
@@ -62,7 +62,7 @@
 
   #define MY_ROLE                 ESP_NOW_ROLE_SLAVE              // set the role of this device: CONTROLLER, SLAVE, COMBO
   #define RECEIVER_ROLE           ESP_NOW_ROLE_CONTROLLER              // set the role of the receiver
-  #define DEVICE_NAME             "gateway_sf" //no spaces as this is used in topic names too
+  #define DEVICE_NAME             "gateway_sf" //no spaces as this is used in topic names too , cannot be more than 15 chars
   #define MQTT_TOPIC              "home/espnow/" DEVICE_NAME
   #define MQTT_BASE_TOPIC          "home/espnow"
   #define ESP_IP_ADDRESS          IP_gateway_sf //from secrets.h\static_ipaddress.h
@@ -71,7 +71,7 @@
   #define STATUS_LED              2 //GPIO on which the status led is connected
   #define DEVICE_MAC              GATEWAY_SF_AP_MAC // from secrets.h . You should preferably define a custom MAC instead of actual device MAC so that the MAC doesnt change with device
   #define PIR_PIN                 3 // GPIO pin no where PIR sensor is connected
-  #define MOTION_SENSOR_NAME      "roof_motion"
+  #define MOTION_SENSOR_NAME      "headroom_motion"
   #define MOTION_ON_DURATION      15 // time in seconds for which motion value should remain ON after detecting motion
 #else
   #error "Device type not found. Have you passed DEVICE id in platform.ini as build flag. See Config.h for all DEVICES"
