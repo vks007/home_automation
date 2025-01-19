@@ -49,6 +49,7 @@
 #include "secrets.h" // provides all passwords and sensitive info
 #include <ArduinoJson.h> // provides json capabilities for messages published to MQTT
 #include <ArduinoQueue.h> // provide Queue management
+#include <CircularBuffer.h> // provides circular buffer for storing messages
 #include <ArduinoOTA.h> 
 #include "espnowMessage.h" // for struct of espnow message
 #include <PubSubClient.h> // library for MQTT
@@ -74,6 +75,7 @@ const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 
 #define OTA_TOPIC "/ota" // end path of topic to publish ota messages
 #define ERROR_TOPIC "/error" // end path of topic to publish error messages
 #define QUEUE_LENGTH 10 // max no of messages the ESP should queue up before replacing them, limited by amount of free memory
+#define PROCESSED_QUEUE_LENGTH 10 // max no of messages the ESP should queue up before replacing them, limited by amount of free memory
 #define MAX_MSG_BUFFER_SIZE 512 // max size of the MQTT packet buffer, it includes topic name+payload+header bytes, set your payload max lenn accordingly using MAX_MESSAGE_LEN below 
 #define MAX_MESSAGE_LEN 412 // defines max message length of payload message. Included space for 100 bytes for topic name + header
 #define HEALTH_INTERVAL 30e3 // interval is millisecs to publish health message for the gateway
@@ -111,6 +113,7 @@ uint8_t kok[KEY_LEN]= PMK_KEY_STR;//comes from secrets.h
 uint8_t key[KEY_LEN] = LMK_KEY_STR;// comes from secrets.h
 
 ArduinoQueue<espnow_message> structQueue(QUEUE_LENGTH);
+CircularBuffer<espnow_message, PROCESSED_QUEUE_LENGTH> processedMessages; // Circular buffer with a fixed size of 10
 WiFiClient espClient;
 PubSubClient client(espClient);
 static espnow_message emptyMessage;
@@ -119,17 +122,19 @@ espnow_message currentMessage = emptyMessage;
 WiFiClient haClient;
 HARestAPI ha_api(haClient);
 
+AsyncWebServer server(80);
+AsyncWebSocket ws("/ws");
+
 #if(USING(ESPNOW_OTA_SERVER))
-  AsyncWebServer server(80);
   const char* input_param_mac = "input_mac";
 #endif
-
 
 #if USING(MOTION_SENSOR)
 pir_sensor motion_sensor(PIR_PIN,MOTION_ON_DURATION);
 #endif
+
 // HTML web page to handle web server requests for ESPNOW OTA functionality
-const char index_html[] PROGMEM = R"rawliteral(
+const char index_html_ota[] PROGMEM = R"rawliteral(
 <!DOCTYPE HTML><html><head>
   <title>ESPNOW OTA</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -145,6 +150,39 @@ const char index_html[] PROGMEM = R"rawliteral(
     <input type="submit" value="Send OTA Request">
   </form><br>
 </body></html>)rawliteral";
+
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE HTML><html><head>
+  <title>ESPNOW OTA</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html {font-family: Times New Roman; display: inline-block; text-align: center;}
+    h2 {font-size: 3.0rem; color: #FF0000;}
+  </style>
+  </head><body>
+  <h1>Processed Messages</h1>
+  <table border='1'>
+    <tr>
+      <th>Message ID</th>
+      <th>Device Name</th>
+      <th>Message Type</th>
+      <!-- Add other columns as needed -->
+    </tr>
+    %TABLE_ROWS%
+  </table>
+  <script>
+    var ws = new WebSocket('ws://' + window.location.hostname + '/ws');
+    ws.onmessage = function(event) {
+      var table = document.querySelector('table');
+      var row = table.insertRow(1); // Insert row at the top (after the header row)
+      var data = JSON.parse(event.data);
+      row.insertCell(0).innerHTML = data.message_id;
+      row.insertCell(1).innerHTML = data.device_name;
+      row.insertCell(2).innerHTML = data.msg_type;
+      // Add other columns as needed
+    };
+  </script>
+  </body></html>)rawliteral";
 
 #if defined(ESP32)
 esp_now_peer_info_t peerInfo; // This object must be a global object else the setting of peer will fail
@@ -467,9 +505,8 @@ void printInitInfo()
 
 }
 
-#if(USING(ESPNOW_OTA_SERVER))
 void notFound(AsyncWebServerRequest *request) {
-  request->send(404, "text/plain", "Not found");
+  request->send(404, "text/plain", "URL Not found");
 }
 
 /*
@@ -502,11 +539,39 @@ void prepare_for_OTA(uint8_t peerAddress[])
   DPRINTLN("Device prepared for sending OTA messages");
 }
 
+// Function to generate the HTML table rows
+String generateTableRows() {
+  String rows = "";
+  for (size_t i = 0; i < processedMessages.size(); i++) {
+    const auto& msg = processedMessages[i];
+    rows += "<tr>";
+    rows += "<td>" + String(msg.message_id) + "</td>";
+    rows += "<td>" + String(msg.device_name) + "</td>";
+    rows += "<td>" + String(msg.msg_type) + "</td>";
+    // Add other columns as needed
+    rows += "</tr>";
+  }
+  return rows;
+}
+
+// Function to handle the root URL
+void handleRoot(AsyncWebServerRequest *request) {
+  String html = index_html;
+  html.replace("%TABLE_ROWS%", generateTableRows());
+  request->send(200, "text/html", html);
+}
+
 void config_webserver()
 {
   // Handles root page
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/html", index_html);
+  // server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+  //   request->send_P(200, "text/html", index_html);
+  // });
+  server.on("/", HTTP_GET, handleRoot);
+  
+  #if(USING(ESPNOW_OTA_SERVER))
+  server.on("/ota", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/html", index_html_ota);
   });
 
   // Handles OTA request for an ESPNOW device
@@ -561,10 +626,11 @@ void config_webserver()
     }
     request->send(200, "text/html", response_msg + mac_addr + " <br><a href=\"/\">Return to Home Page</a>");
   });
+  #endif
   server.onNotFound(notFound);
+  server.addHandler(&ws); // for websocket
   server.begin();  
 }
-#endif
 
 
 /*
@@ -676,9 +742,7 @@ void setup() {
     }
   });
   ArduinoOTA.begin();
-  #if(USING(ESPNOW_OTA_SERVER))
   config_webserver();
-  #endif
   //set MQTT buffer size
   if(client.getBufferSize() < MAX_MSG_BUFFER_SIZE)
   {
@@ -815,6 +879,20 @@ void do_queue_check()
   }
 }
 
+void add_message_to_processed_queue(espnow_message msg)
+{
+  processedMessages.push(msg);
+ // Notify WebSocket clients about the new message
+  DynamicJsonDocument doc(1024);
+  doc["message_id"] = msg.message_id;
+  doc["device_name"] = msg.device_name;
+  doc["msg_type"] = msg.msg_type;
+  // Add other fields as needed
+  String json;
+  serializeJson(doc, json);
+  ws.textAll(json);
+}
+
 /*
  * runs the loop to check for incoming messages in the queue, picks them up and posts them to MQTT
  */
@@ -848,6 +926,7 @@ void loop() {
         if(publishToMQTT(currentMessage))
         {
           gateway.msg_count++;
+          add_message_to_processed_queue(currentMessage);
           currentMessage = emptyMessage;
         }
         else
