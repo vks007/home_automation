@@ -189,15 +189,19 @@ float getBatteryVoltage()
  */
 float getTemperature()
 {
+  #if(USING(TESTING_MODE))
+    return random(0,100);
+  #else  
   float temp = 0;
-  sensors.requestTemperatures(); // Send the command to get temperatures
-  // If the sensor is disconnected it gives junk negative values, to eliminate them I am setting the value to MIN_TEMP in that case
-  if(sensors.getTempCByIndex(0) < MIN_TEMP)
-    temp = MIN_TEMP;
-  else
-    temp = sensors.getTempCByIndex(0); // get temperature reading for the first sensor
-  DPRINT("Temp:");DPRINTLN(myData.floatvalue1);
-  return temp;
+    sensors.requestTemperatures(); // Send the command to get temperatures
+    // If the sensor is disconnected it gives junk negative values, to eliminate them I am setting the value to MIN_TEMP in that case
+    if(sensors.getTempCByIndex(0) < MIN_TEMP)
+      temp = MIN_TEMP;
+    else
+      temp = sensors.getTempCByIndex(0); // get temperature reading for the first sensor
+    DPRINT("Temp:");DPRINTLN(myData.floatvalue1);
+    return temp;
+  #endif
 }
 
 /**
@@ -229,12 +233,12 @@ void loop() {
     myData.intvalue4 = 0;
     myData.floatvalue3 = 0;
     myData.floatvalue4 = 0;
-    myData.chardata1[MAX_CHAR_DATA_LEN-1] = '\0'; // Ensure null termination (index starts from zero)
+    myData.chardata1[MAX_CHAR_DATA_LEN] = '\0'; // Ensure null termination (index starts from zero)
     short str_len = strlen(compile_version);
     if (str_len > MAX_CHAR_DATA_LEN-1)
         str_len = MAX_CHAR_DATA_LEN-1;
     strncpy(myData.chardata2, compile_version, str_len);
-    myData.chardata2[str_len] = '\0'; // Ensure null termination
+    myData.chardata2[str_len+1] = '\0'; // Ensure null termination
     myData.message_id = millis();//there is no use of message_id so using it to send the uptime
 
     bool result = sendESPnowMessage(&myData,gatewayAddress,1,true);
@@ -245,7 +249,7 @@ void loop() {
     
     #if(USING(TESTING_MODE)) // If we are testing then it sends a message MAX_COUNT times
     {
-      delay(15000);
+      delay(1000);
     }
     #else 
         break;
