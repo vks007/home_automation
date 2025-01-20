@@ -91,11 +91,11 @@
 
 #elif (DEVICE == TEST_DOOR)
   #pragma message "Compiling the program for the device: TEST_DOOR" 
-  #define TEST_MODE               NOT_IN_USE // defines if this code is being used during testing, in this case, the ESP does not power down
+  #define TEST_MODE               IN_USE // defines if this code is being used during testing, in this case, the ESP does not power down
   #define SERIAL_DEBUG            IN_USE 
   #define SECURITY                NOT_IN_USE // using security or not to encrypt messages
   #define EEPROM_STORE            IN_USE // If EEPROM is in use or not , it is needed if using OTA
-  #define OTA                     IN_USE // If OTA mode is in use or not
+  #define OTA                     NOT_IN_USE // If OTA mode is in use or not
   #define STATUS_LED              IN_USE // If Status LED is used or not, affects battery
   #define MY_ROLE                 ESP_NOW_ROLE_CONTROLLER              // set the role of this device: CONTROLLER, SLAVE, COMBO
   #define RECEIVER_ROLE           ESP_NOW_ROLE_SLAVE              // set the role of the receiver
@@ -103,8 +103,8 @@
   #define WiFi_SSID               primary_ssid //from secrets.h
   #define WiFi_SSID_PSWD          primary_ssid_pswd // used only for OTA updates else this is not used , from secrets.h
   #define ESP_IP_ADDRESS          IP_espnow_sensor //from secrets.h\static_ipaddress.h
-  #define HOLD_PIN                0  // defines hold pin (will hold power to the ESP).
-  #define SIGNAL_PIN              3 //GPIO from which the input is read
+  #define HOLD_PIN                5  // defines hold pin (will hold power to the ESP).
+  #define SIGNAL_PIN              4 //GPIO from which the input is read
   #define BOUNCE_DELAY            1 // bounce delay in seconds, this is used for a bumby door which bounces a few times before settling on either open or closed
   #define HOLDING_LOGIC           LOGIC_NORMAL // LOGIC_NORMAL holds the pin HIGH to keep ESP ON , LOGIC_INVERTED hold the PIN low to keep ESP ON
   #define LED_GPIO                2
