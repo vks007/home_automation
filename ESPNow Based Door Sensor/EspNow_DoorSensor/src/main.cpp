@@ -119,6 +119,7 @@ void printInitInfo()
 
 }
 
+#if USING(OTA)
 void setup_OTA()
 {
   WiFi.mode(WIFI_AP_STA);
@@ -183,6 +184,7 @@ void setup_OTA()
   DPRINTLN("OTA set up successfully");
 
 }
+#endif
 
 void send_message(msg_type_t msg_type, bool acknowledge = true)
 {
@@ -262,6 +264,13 @@ void set_led(bool state)
   #endif
 }
 
+void toggle_led()
+{
+  #if(USING(STATUS_LED))
+    digitalWrite(LED_GPIO,!(digitalRead(LED_GPIO))); // turn OFF the LED
+  #endif
+}
+
 /*
 * Processes incoming messages, for now its only OTA msg type, In future can code for more events
 * For future events I will have to collect incoming messages in a queue and then process them
@@ -304,17 +313,24 @@ void scan_for_messages()
 
 void setup() {
   //Set the HOLD pin HIGH so that the ESP maintains power to itself. We will set it to low once we're done with the job, terminating power to ESP
-  pinMode(HOLD_PIN, OUTPUT);
+  if(HOLD_PIN == 1 || HOLD_PIN == 3)
+  {
+    pinMode(HOLD_PIN, FUNCTION_3);//Because we're using Rx & Tx as inputs here, we have to set the input type
+  }
+    pinMode(HOLD_PIN, OUTPUT);
   if(HOLDING_LOGIC == LOGIC_NORMAL)
     digitalWrite(HOLD_PIN, HIGH);  // sets HOLD_PIN to high
   else // LOGIC_INVERTED
     digitalWrite(HOLD_PIN, LOW);  // sets HOLD_PIN to high
-
   DBEGIN(115200);
+  
+  #if(USING(STATUS_LED))
+    pinMode(LED_GPIO, OUTPUT);
+  #endif  
+
   printInitInfo();
   setCustomMAC(customMACAddress,true);
 
-  pinMode(HOLD_PIN, FUNCTION_3);//Because we're using Rx & Tx as inputs here, we have to set the input type     
 
   //Initialize EEPROM , this is used to store the channel no for espnow in the memory, only stored when it changes which is rare
   // Also used for storing OTA flag
@@ -323,9 +339,11 @@ void setup() {
   DPRINTFLN("Starting up in %s mode",ota_mode== MODE_OTA_START?"OTA":"ESPNOW");
   if(ota_mode == MODE_OTA_START)
   {
-    setup_OTA();
-    set_led(true);
-    // TO DO : explore if there is a way to enable Serial Debug when in OTA mode even if it has been turned OFF in the Config.h
+    #if USING(OTA)
+      setup_OTA();
+      set_led(true);
+      // TO DO : explore if there is a way to enable Serial Debug when in OTA mode even if it has been turned OFF in the Config.h
+    #endif
   }
   else // this will also execute if we get any junk value which is possible if we've never written to EEPROM ever
   {
@@ -353,21 +371,24 @@ void setup() {
 void loop() {
   if(ota_mode== MODE_OTA_START) 
   {
-    ArduinoOTA.handle();
-    // countdown to the max time you should remain in the OTA mode before going back to sleep
-    if((millis()- start_time) > OTA_TIMEOUT*1000)
-    {
-      set_led(false);
-      DPRINTLN("No OTA file received, timing out of OTA mode");
-      ota_mode = MODE_NORMAL; // This will make the code exit loop() by killing power to itself
-      DFLUSH();
-    }
+    #if USING(OTA)
+      ArduinoOTA.handle();
+      // countdown to the max time you should remain in the OTA mode before going back to sleep
+      if((millis()- start_time) > OTA_TIMEOUT*1000)
+      {
+        set_led(false);
+        DPRINTLN("No OTA file received, timing out of OTA mode");
+        ota_mode = MODE_NORMAL; // This will make the code exit loop() by killing power to itself
+        DFLUSH();
+      }
+    #endif
   }
   else
   {
     if(!msgSent)
     {
-      send_message(ESPNOW_SENSOR,true);
+      //send_message(ESPNOW_SENSOR,true);
+      toggle_led();
       #if !USING(TEST_MODE) // If not testing mode only then set the flag as below
         msgSent = true; //once a message is sent, set it to true, this will prevent any other message being sent as it takes some finite time to kill power to the ESP
                         // hence loop() keeps executing and sending messages
@@ -379,11 +400,8 @@ void loop() {
     if(!msgReceived) //no messages are received to process, turn off led and go to sleep
     {
       #if USING(TEST_MODE)
-      delay(10000); // we're in test mode, kill time before looping again
-      #else
-      if(!powered_down)
+      if(millis() >= 5000)
       {
-        set_led(false);
         // Now you can kill power
         DPRINTLN("powering down");
         powered_down = true;
@@ -392,6 +410,20 @@ void loop() {
           digitalWrite(HOLD_PIN, LOW);  // cut power to the ESP
         else // LOGIC_INVERTED
           digitalWrite(HOLD_PIN, HIGH);  // cut power to the ESP
+      }
+      delay(500); // we're in test mode, kill time before looping again
+      #else
+      if(!powered_down)
+      {
+        set_led(false);
+        // Now you can kill power
+        DPRINTLN("powering down");
+        powered_down = true;
+        DFLUSH();
+        // if(HOLDING_LOGIC == LOGIC_NORMAL)
+        //   digitalWrite(HOLD_PIN, LOW);  // cut power to the ESP
+        // else // LOGIC_INVERTED
+        //   digitalWrite(HOLD_PIN, HIGH);  // cut power to the ESP
       } // else nothing to do, leep looping if ESP is powered
       #endif
     }
