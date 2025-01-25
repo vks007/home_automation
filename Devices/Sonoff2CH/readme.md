@@ -19,5 +19,5 @@ PCB Descriptions:
 - GPIO2 is a test pad to which I have soldred a wire and brought above the PCB (Blue wire)
 - Status LED is connected to the board has been removed and GPIO13 repurposed as an input PIN.
 - The other two connected of the 2 state LED are not used. See Schematic for more details if you want to. They are supposed to be used by the RF module on the sonoff and are not connected.
-- The relay module added is a Active LOW relay which works on 5V. As the sonff GPIO works on 3.3V I have introduced a 3.3V to 5V level shifter in between using the following circuit. 
+- The relay module added is a Active LOW relay which works on 5V. As the sonff GPIO works on 3.3V I have introduced a 3.3V to 5V level shifter in between using the following circuit. The transistor could be any NPN transator like BC548.  
 ![3.3V to 5V level shifter](./3V3to5Vshifter.png)
