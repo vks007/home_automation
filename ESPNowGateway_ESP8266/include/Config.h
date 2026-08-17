@@ -48,7 +48,6 @@
   #define WiFi_SSID               primary_ssid //from secrets.h
   #define WiFi_SSID_PSWD          primary_ssid_pswd //from secrets.h
   #define STATUS_LED              2 //GPIO on which the status led is connected
-  //#define API_TIMEOUT           60 // this defaults to 600 sec, you can override it here. This timeout is for monitoring of MQTT, beyond which the ESP resets itself
   #define DEVICE_MAC              GATEWAY_TEST_AP_MAC // from secrets.h . You should preferably define a custom MAC instead of actual device MAC so that the MAC doesnt change with device
 #elif (DEVICE == GATEWAY_SF)
   //Turn features ON and OFF below start

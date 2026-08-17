@@ -11,6 +11,8 @@
  * - DONE - Do not pop out the message form the queue in case posting to MQTT isnt successful
  * 
  * TO DO :
+ * - Include time the message was received with each message. see if you can also publish this to the MQTT and have a sensor in HA to collect the same.
+ * - Retry a message a certain no of times before junking it. This is important to let the other messages to progress in case if faulty message
  * - replace EEPROM library with LittleFS as EEPROM is deprecated
  * - implement passing of OTA trigger params like , timeperiod, interval via web page rather than hard coded
  * - implement websockets to indicate progress of OTA trigger and its result
@@ -28,10 +30,9 @@
 
 // IMPORTANT : Compile it for the device you want, details of which are in Config.h
 /* For now currently turning OFF security as I am not able to make it work. It works even if the keys aren't the same on controller and slave
- * Also I have to find a way to create a list of multiple controllers as with security you haev to register each controller separately
+ * Also I have to find a way to create a list of multiple controllers as with security you have to register each controller separately
  * See ref code here: https://www.electrosoftcloud.com/en/security-on-your-esp32-with-esp-now/
 */
-//#define MQTT_MAX_PACKET_SIZE 2048
 
 #include <Arduino.h>
 #ifdef ESP32
@@ -42,14 +43,14 @@
   #include <ESPAsyncTCP.h>
 #endif
 #include <ESPAsyncWebServer.h>
+#include <ESP8266mDNS.h> // for mdns service to broadcast .local address
 
 #include "Config.h" // defines all Config parameters. set your values before compiling
 #include "Debugutils.h" //This file is located in the Sketches\libraries\DebugUtils folder
 #include <espnow.h> // provides espnow capabilities for ESP8266
 #include "secrets.h" // provides all passwords and sensitive info
 #include <ArduinoJson.h> // provides json capabilities for messages published to MQTT
-#include <ArduinoQueue.h> // provide Queue management
-#include <CircularBuffer.h> // provides circular buffer for storing messages
+#include <CircularBuffer.hpp> // provides circular buffer for storing messages
 #include <ArduinoOTA.h> 
 #include "espnowMessage.h" // for struct of espnow message
 #include <PubSubClient.h> // library for MQTT
@@ -74,7 +75,7 @@ const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 
 #define STATE_TOPIC "/state" // end path of topic to publish state of the messages
 #define OTA_TOPIC "/ota" // end path of topic to publish ota messages
 #define ERROR_TOPIC "/error" // end path of topic to publish error messages
-#define QUEUE_LENGTH 10 // max no of messages the ESP should queue up before replacing them, limited by amount of free memory
+#define QUEUE_LENGTH 50 // max no of messages the ESP should queue up before replacing them, limited by amount of free memory
 #define PROCESSED_QUEUE_LENGTH 10 // max no of messages the ESP should queue up before replacing them, limited by amount of free memory
 #define MAX_MSG_BUFFER_SIZE 512 // max size of the MQTT packet buffer, it includes topic name+payload+header bytes, set your payload max lenn accordingly using MAX_MESSAGE_LEN below 
 #define MAX_MESSAGE_LEN 412 // defines max message length of payload message. Included space for 100 bytes for topic name + header
@@ -89,7 +90,6 @@ const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 
 const char* ssid = WiFi_SSID; // comes from config.h
 const char* password = WiFi_SSID_PSWD; // comes from config.h
 long last_time = 0; // last time when health check was published
-bool retry_message = false; // flag to indicate to retry sending of message in case of failure
 long last_message_count = 0;//stores the last count with which message rate was calculated
 long lastReconnectAttempt = 0; // Keeps track of the last time an attempt was made to connect to MQTT
 short mqtt_publish_fails = 0; //tracks the no of times MQTT publishing has failed even though the MQTT client was connected
@@ -112,8 +112,8 @@ uint8_t controller_mac[2][6] = {
 uint8_t kok[KEY_LEN]= PMK_KEY_STR;//comes from secrets.h
 uint8_t key[KEY_LEN] = LMK_KEY_STR;// comes from secrets.h
 
-ArduinoQueue<espnow_message> structQueue(QUEUE_LENGTH);
-CircularBuffer<espnow_message, PROCESSED_QUEUE_LENGTH> processedMessages; // Circular buffer with a fixed size of 10
+CircularBuffer<espnow_message, QUEUE_LENGTH> structQueue; // Circular buffer to hold received messaged for processing
+CircularBuffer<espnow_message, PROCESSED_QUEUE_LENGTH> processedMessages; // Circular buffer with a fixed size of PROCESSED_QUEUE_LENGTH
 WiFiClient espClient;
 PubSubClient client(espClient);
 static espnow_message emptyMessage;
@@ -153,36 +153,105 @@ const char index_html_ota[] PROGMEM = R"rawliteral(
 
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE HTML><html><head>
-  <title>ESPNOW OTA</title>
+  <title>ESPNOW Gateway</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    html {font-family: Times New Roman; display: inline-block; text-align: center;}
-    h2 {font-size: 3.0rem; color: #FF0000;}
+    html {font-family: Arial, sans-serif; display: inline-block; text-align: center;}
+    h1 {font-size: 2.5rem; color: #333;}
+    table {width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.9rem;}
+    th, td {padding: 8px; border: 1px solid #ddd; text-align: left;}
+    th {background-color: #f2f2f2; color: #333;}
+    tr:nth-child(even) {background-color: #f9f9f9;}
+    tr:hover {background-color: #f1f1f1;}
+    .device-filter {margin: 12px 0; text-align: left;}
+    .device-filter input {padding: 6px; width: 240px; max-width: 70%;}
+    .device-filter button {padding: 6px 12px;}
   </style>
   </head><body>
-  <h1>Processed Messages</h1>
+  <h1>HEADING</h1>
+  <div class="device-filter">
+    <label for="device-filter-input">Device name:</label>
+    <input id="device-filter-input" type="text" placeholder="Enter device name">
+    <button id="device-filter-button" type="button">Filter</button>
+  </div>
   <table border='1'>
     <tr>
+      <th>Time</th>
       <th>Message ID</th>
       <th>Device Name</th>
       <th>Message Type</th>
-      <!-- Add other columns as needed -->
+      <th>Sender MAC</th>
+      <th>Int Value1</th>
+      <th>Int Value2</th>
+      <th>Int Value3</th>
+      <th>Int Value4</th>
+      <th>Float Value1</th>
+      <th>Float Value2</th>
+      <th>Float Value3</th>
+      <th>Float Value4</th>
+      <th>Char Value1</th>
+      <th>Char Value2</th>
     </tr>
-    %TABLE_ROWS%
+    <!--TABLEROWS-->
   </table>
+  <!--SCRIPT-->
+  <script>
+    var activeDeviceFilter = '';
+
+    function applyDeviceFilter() {
+      var filterInput = document.getElementById('device-filter-input');
+      activeDeviceFilter = filterInput.value.trim().toLowerCase();
+      var rows = document.querySelector('table').rows;
+
+      for (var rowIndex = 1; rowIndex < rows.length; rowIndex++) {
+        var deviceName = rows[rowIndex].cells[2].textContent.toLowerCase();
+        rows[rowIndex].style.display = !activeDeviceFilter ||
+          deviceName.indexOf(activeDeviceFilter) !== -1 ? '' : 'none';
+      }
+    }
+
+    document.getElementById('device-filter-button').addEventListener('click', applyDeviceFilter);
+
+    function formatClientTime() {
+      return new Date().toLocaleTimeString([], {
+        hour: 'numeric',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+      });
+    }
+
+    document.querySelectorAll('[data-client-time]').forEach(function (cell) {
+      cell.textContent = formatClientTime();
+    });
+  </script>
+  </body></html>)rawliteral";
+
+const char ws_script[] PROGMEM = R"rawliteral(
   <script>
     var ws = new WebSocket('ws://' + window.location.hostname + '/ws');
     ws.onmessage = function(event) {
       var table = document.querySelector('table');
       var row = table.insertRow(1); // Insert row at the top (after the header row)
       var data = JSON.parse(event.data);
-      row.insertCell(0).innerHTML = data.message_id;
-      row.insertCell(1).innerHTML = data.device_name;
-      row.insertCell(2).innerHTML = data.msg_type;
-      // Add other columns as needed
+      row.insertCell(0).textContent = formatClientTime();
+      row.insertCell(1).textContent = data.message_id;
+      row.insertCell(2).textContent = data.device_name;
+      row.insertCell(3).textContent = data.msg_type;
+      row.insertCell(4).textContent = data.sender_mac;
+      row.insertCell(5).textContent = data.intvalue1;
+      row.insertCell(6).textContent = data.intvalue2;
+      row.insertCell(7).textContent = data.intvalue3;
+      row.insertCell(8).textContent = data.intvalue4;
+      row.insertCell(9).textContent = data.floatvalue1;
+      row.insertCell(10).textContent = data.floatvalue2;
+      row.insertCell(11).textContent = data.floatvalue3;
+      row.insertCell(12).textContent = data.floatvalue4;
+      row.insertCell(13).textContent = data.chardata1;
+      row.insertCell(14).textContent = data.chardata2;
+      applyDeviceFilter();
     };
-  </script>
-  </body></html>)rawliteral";
+  </script>)rawliteral";
 
 #if defined(ESP32)
 esp_now_peer_info_t peerInfo; // This object must be a global object else the setting of peer will fail
@@ -323,7 +392,7 @@ bool publishToMQTT(espnow_message msg) {
 
 //  DPRINTF("publishToMQTT:%lu,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
   
-  StaticJsonDocument<MAX_MESSAGE_LEN> msg_json;
+  JsonDocument msg_json;
   msg_json["gateway"] = WiFi.hostname();
   msg_json["type"] = msg.msg_type;
   msg_json["mac"] = msg.sender_mac;
@@ -409,11 +478,7 @@ void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
   espnow_message msg;
   memcpy(&msg, incomingData, sizeof(msg));
   DPRINTF("OnDataRecv:%lu,%d,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.msg_type,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
-  
-    if(!structQueue.isFull())
-      structQueue.enqueue(msg);
-    else
-      DPRINTLN("Queue Full");
+  structQueue.push(msg);
 };
 
 /*
@@ -421,7 +486,7 @@ void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
  */
 void update_gateway_stats()
 {
-  gateway.queue_length = structQueue.itemCount();
+  gateway.queue_length = structQueue.size();
   gateway.rssi = WiFi.RSSI();
   gateway.str_mac = WiFi.macAddress();
   gateway.str_macAP = WiFi.softAPmacAddress();
@@ -445,7 +510,7 @@ bool publishHealthMessage(bool init=false)
   if(init)
   {
      // publish the init message
-    StaticJsonDocument<MAX_MESSAGE_LEN> init_msg_json;//It is recommended to create a new obj than reuse the earlier one by ArduinoJson
+    JsonDocument init_msg_json;//It is recommended to create a new obj than reuse the earlier one by ArduinoJson
     init_msg_json["version"] = compile_version;
     init_msg_json["tot_memKB"] = (float)ESP.getFlashChipSize() / 1024.0;
     init_msg_json["mac"] = gateway.str_mac;
@@ -459,7 +524,7 @@ bool publishHealthMessage(bool init=false)
   }
   else
   {
-    StaticJsonDocument<MAX_MESSAGE_LEN> msg_json;
+    JsonDocument msg_json;
     msg_json["uptime"] = gateway.uptime; // uptime in minutes
     msg_json["mem_freeKB"] = serialized(String((float)gateway.free_mem_KB,0));//Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
     msg_json["msg_count"] = gateway.msg_count;
@@ -475,7 +540,7 @@ bool publishHealthMessage(bool init=false)
     {
       // publish the wifi message , I am publishing this everytime because it also has rssi
       String strIP_address = WiFi.localIP().toString();
-      StaticJsonDocument<MAX_MESSAGE_LEN> wifi_msg_json;//It is recommended to create a new obj than reuse the earlier one by ArduinoJson
+      JsonDocument wifi_msg_json;//It is recommended to create a new obj than reuse the earlier one by ArduinoJson
       wifi_msg_json["ip_address"] = strIP_address;
       wifi_msg_json["rssi"] = WiFi.RSSI();
       strcpy(publish_topic,MQTT_TOPIC);
@@ -539,35 +604,55 @@ void prepare_for_OTA(uint8_t peerAddress[])
   DPRINTLN("Device prepared for sending OTA messages");
 }
 
+// Function to handle the root URL
+void handleRoot(AsyncWebServerRequest *request) {
+  String html = index_html;
+  html.replace("<!--SCRIPT-->", ws_script);
+  html.replace("ESPNOW Gateway", DEVICE_NAME);
+  html.replace("HEADING", DEVICE_NAME " - Processed Messages");
+  request->send(200, "text/html", html);
+}
+
 // Function to generate the HTML table rows
-String generateTableRows() {
+String generate_pending_table_rows() {
   String rows = "";
-  for (size_t i = 0; i < processedMessages.size(); i++) {
-    const auto& msg = processedMessages[i];
+  for (size_t i = 0; i < structQueue.size(); i++) {
+    const auto& msg = structQueue[i];
     rows += "<tr>";
+    rows += "<td data-client-time></td>";
     rows += "<td>" + String(msg.message_id) + "</td>";
     rows += "<td>" + String(msg.device_name) + "</td>";
     rows += "<td>" + String(msg.msg_type) + "</td>";
-    // Add other columns as needed
+    rows += "<td>" + String(msg.sender_mac) + "</td>";
+    rows += "<td>" + String(msg.intvalue1) + "</td>";
+    rows += "<td>" + String(msg.intvalue2) + "</td>";
+    rows += "<td>" + String(msg.intvalue3) + "</td>";
+    rows += "<td>" + String(msg.intvalue4) + "</td>";
+    rows += "<td>" + String(msg.floatvalue1) + "</td>";
+    rows += "<td>" + String(msg.floatvalue2) + "</td>";
+    rows += "<td>" + String(msg.floatvalue3) + "</td>";
+    rows += "<td>" + String(msg.floatvalue4) + "</td>";
+    rows += "<td>" + String(msg.chardata1) + "</td>";
+    rows += "<td>" + String(msg.chardata2) + "</td>";
     rows += "</tr>";
   }
   return rows;
 }
 
 // Function to handle the root URL
-void handleRoot(AsyncWebServerRequest *request) {
+void handle_queue(AsyncWebServerRequest *request) {
   String html = index_html;
-  html.replace("%TABLE_ROWS%", generateTableRows());
+  html.replace("ESPNOW Gateway", DEVICE_NAME);
+  html.replace("HEADING", DEVICE_NAME " - Queued Messages");
+  html.replace("<!--TABLEROWS-->", generate_pending_table_rows());
   request->send(200, "text/html", html);
 }
 
+
 void config_webserver()
 {
-  // Handles root page
-  // server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-  //   request->send_P(200, "text/html", index_html);
-  // });
   server.on("/", HTTP_GET, handleRoot);
+  server.on("/queue", HTTP_GET, handle_queue);
   
   #if(USING(ESPNOW_OTA_SERVER))
   server.on("/ota", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -666,8 +751,12 @@ void setup() {
   pinMode(STATUS_LED,OUTPUT);
   WiFi.config(ESP_IP_ADDRESS, default_gateway, subnet_mask);//from secrets.h
   String device_name = DEVICE_NAME;
-  device_name.replace("_","-");//hostname dont allow underscores or spaces
-  WiFi.hostname(device_name.c_str());// Set Hostname.
+  device_name.replace("_","");//hostname dont allow underscores or spaces
+  device_name.replace(" ","-");//hostname dont allow underscores or spaces
+  char hostname[24];
+  strncpy(hostname, device_name.c_str(), 23); //hostname can be a max of 24 chars only
+  hostname[23] = '\0'; // Ensure null termination
+  WiFi.hostname(hostname); // Set Hostname.  
 
   // Connect to the WiFi as a station device
   WiFi.begin(ssid, password);
@@ -681,6 +770,13 @@ void setup() {
   DPRINT("Wi-Fi Channel: ");
   DPRINTLN(WiFi.channel());
   WiFi.setAutoReconnect(true);
+  
+  //mdns is necessary to broadcast the hostname.local address
+  if(MDNS.begin(WiFi.getHostname(),WiFi.localIP()))
+    {DPRINT("MDNS set up successfully with hostname: ");DPRINTLN(WiFi.getHostname());
+    }
+  else
+    DPRINTLN("error setting up MDNS");
 
   if((WiFi.status() == WL_CONNECTED))
   {
@@ -883,18 +979,105 @@ void add_message_to_processed_queue(espnow_message msg)
 {
   processedMessages.push(msg);
  // Notify WebSocket clients about the new message
-  DynamicJsonDocument doc(1024);
+  JsonDocument doc;
   doc["message_id"] = msg.message_id;
   doc["device_name"] = msg.device_name;
   doc["msg_type"] = msg.msg_type;
-  // Add other fields as needed
+  doc["sender_mac"] = msg.sender_mac;
+  doc["intvalue1"] = msg.intvalue1;
+  doc["intvalue2"] = msg.intvalue2;
+  doc["intvalue3"] = msg.intvalue3;
+  doc["intvalue4"] = msg.intvalue4;
+  doc["floatvalue1"] = msg.floatvalue1;
+  doc["floatvalue2"] = msg.floatvalue2;
+  doc["floatvalue3"] = msg.floatvalue3;
+  doc["floatvalue4"] = msg.floatvalue4;
+  doc["chardata1"] = msg.chardata1;
+  doc["chardata2"] = msg.chardata2;
   String json;
   serializeJson(doc, json);
   ws.textAll(json);
 }
 
+void process_message()
+{
+  static bool retry_message = false; // flag to indicate to retry sending of message in case of failure
+
+  if(!structQueue.isEmpty())
+    if(!retry_message)
+      currentMessage = structQueue.pop();
+    //else last message content is still there is currentMessage
+  
+  if(currentMessage != emptyMessage)
+  {
+    DPRINTFLN("Processing msg:%lu,%d",currentMessage.message_id,currentMessage.msg_type);
+    if(currentMessage.msg_type == ESPNOW_SENSOR)
+    {
+      if(publishToMQTT(currentMessage))
+      {
+        gateway.msg_count++;
+        add_message_to_processed_queue(currentMessage);
+        currentMessage = emptyMessage;
+        retry_message = false;
+      }
+      else
+      {
+        retry_message = true;
+      }//else the same message will be retried the next time
+    }
+    else if(currentMessage.msg_type == ESPNOW_COMMAND)
+    {
+      if(process_command_message(currentMessage))
+      {
+        gateway.msg_count++;
+        gateway.cmnd_msg_count++;
+        currentMessage = emptyMessage;
+        retry_message = false;
+      }
+      else
+      {
+        retry_message = true;
+      }//else the same message will be retried the next time
+    }
+    #if(USING(ESPNOW_OTA_SERVER))
+    else if(currentMessage.msg_type == ESPNOW_OTA)
+    {
+      if(esp_ota_device.ota_mode)
+      {
+        char buffer[18];
+        sprintf(buffer, "%02X:%02X:%02X:%02X:%02X:%02X",esp_ota_device.mac[0],esp_ota_device.mac[1],esp_ota_device.mac[2],esp_ota_device.mac[3],esp_ota_device.mac[4],esp_ota_device.mac[5] );
+        if(xstrcmp(buffer,currentMessage.sender_mac))
+        {
+          esp_ota_device.ota_mode = false;
+          esp_ota_device.ota_done = true;
+          delete_peer(esp_ota_device.mac);// now that we're done with OTA , delete the peer
+          DPRINTLN("OTA successfuly completed for device:");
+        }
+        else
+          {DPRINTFLN("MAC address of OTA device did not match. Target mac: %s , MAC in msg: %s",buffer,currentMessage.sender_mac);}
+      }
+      else
+        DPRINTLN("OTA ack message received when not in OTA mode, ignoring...");
+      // pubish the OTA message to MQTT
+      publishToMQTT(currentMessage);
+      gateway.msg_count++;
+      currentMessage = emptyMessage;
+    }
+    #endif
+    else
+    {
+      DPRINTLN("message received without msg_type set, ignoring...");
+      gateway.msg_count++;
+      currentMessage = emptyMessage;
+    }
+  }
+
+}
+
 /*
- * runs the loop to check for incoming messages in the queue, picks them up and posts them to MQTT
+ * This is the main loop where the code waits for the delivery of the message sent
+ * If the message is not delivered within the timeout then it retries to send the message
+ * The message is sent only once and the code waits for the delivery confirmation
  */
 void loop() {
   //check for MQTT connection
@@ -913,76 +1096,12 @@ void loop() {
   ArduinoOTA.handle();
   if(client.connected())
   {
-    if(!structQueue.isEmpty())
-      if(!retry_message)
-        currentMessage = structQueue.dequeue();
-      //else last message content is still there is currentMessage
-    
-    if(currentMessage != emptyMessage)
-    {
-      DPRINTFLN("Processing msg:%lu,%d",currentMessage.message_id,currentMessage.msg_type);
-      if(currentMessage.msg_type == ESPNOW_SENSOR)
-      {
-        if(publishToMQTT(currentMessage))
-        {
-          gateway.msg_count++;
-          add_message_to_processed_queue(currentMessage);
-          currentMessage = emptyMessage;
-        }
-        else
-        {
-          retry_message = true;
-        }//else the same message will be retried the next time
-      }
-      else if(currentMessage.msg_type == ESPNOW_COMMAND)
-      {
-        if(process_command_message(currentMessage))
-        {
-          gateway.msg_count++;
-          gateway.cmnd_msg_count++;
-          currentMessage = emptyMessage;
-        }
-        else
-        {
-          retry_message = true;
-        }//else the same message will be retried the next time
-      }
-      #if(USING(ESPNOW_OTA_SERVER))
-      else if(currentMessage.msg_type == ESPNOW_OTA)
-      {
-        if(esp_ota_device.ota_mode)
-        {
-          char buffer[18];
-          sprintf(buffer, "%02X:%02X:%02X:%02X:%02X:%02X",esp_ota_device.mac[0],esp_ota_device.mac[1],esp_ota_device.mac[2],esp_ota_device.mac[3],esp_ota_device.mac[4],esp_ota_device.mac[5] );
-          if(xstrcmp(buffer,currentMessage.sender_mac))
-          {
-            esp_ota_device.ota_mode = false;
-            esp_ota_device.ota_done = true;
-            delete_peer(esp_ota_device.mac);// now that we're done with OTA , delete the peer
-            DPRINTLN("OTA successfuly completed for device:");
-          }
-          else
-            {DPRINTFLN("MAC address of OTA device did not match. Target mac: %s , MAC in msg: %s",buffer,currentMessage.sender_mac);}
-        }
-        else
-          DPRINTLN("OTA ack message received when not in OTA mode, ignoring...");
-        // pubish the OTA message to MQTT
-        publishToMQTT(currentMessage);
-        gateway.msg_count++;
-        currentMessage = emptyMessage;
-      }
-      #endif
-      else
-      {
-        DPRINTLN("message received without msg_type set, ignoring...");
-        gateway.msg_count++;
-        currentMessage = emptyMessage;
-      }
-    }
+    process_message();
   }
   do_health_check();
-  do_queue_check();
+  //do_queue_check(); // commenting for now as I have to debug other issues, should uncomment it later
   statusLED.loop();
   do_ota_server();
+  MDNS.update(); // Let MDNS advertise the hostname
 
 }
