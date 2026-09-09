@@ -79,7 +79,7 @@ public:
     }
 
 private:
-    int _timeout;           ///< The timeout period in milliseconds.
+    unsigned short _timeout;           ///< The timeout period in milliseconds.
     bool _monitor_flag;     ///< The flag to monitor.
     unsigned long _last_timestamp; ///< The last timestamp when the watchdog timer was reset.
 };

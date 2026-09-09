@@ -26,8 +26,8 @@ typedef struct espnow_device
   uint8_t mac[6];
   bool ota_mode;
   volatile bool ota_done;
-  short duration;
-  short interval;
+  unsigned short duration;
+  unsigned short interval;
 }espnow_device;
 
 // Datatypes in Arduino : https://www.tutorialspoint.com/arduino/arduino_data_types.htm
@@ -57,7 +57,7 @@ typedef struct espnow_message{
 bool operator==(const espnow_message& lhs, const espnow_message& rhs)
 {
   return (xstrcmp(lhs.device_name,rhs.device_name) && lhs.message_id==rhs.message_id && \
-  lhs.intvalue1==rhs.intvalue2 && lhs.intvalue1==rhs.intvalue2 && lhs.intvalue3==rhs.intvalue3 && \
+  lhs.intvalue1==rhs.intvalue1 && lhs.intvalue2==rhs.intvalue2 && lhs.intvalue3==rhs.intvalue3 && \
   lhs.intvalue4==rhs.intvalue4 && lhs.floatvalue1==rhs.floatvalue1 && lhs.floatvalue2==rhs.floatvalue2 && \
   lhs.floatvalue3==rhs.floatvalue3 && lhs.floatvalue4==rhs.floatvalue4 && xstrcmp(lhs.chardata1,rhs.chardata1) && \
   xstrcmp(lhs.chardata2,rhs.chardata2));
