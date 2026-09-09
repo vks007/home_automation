@@ -1,4 +1,4 @@
-# Piezo Vibration Sensor — Analog Front End
+# Piezo Vibration Sensor
 
 Design reference for the piezo-based vibration sensor used to detect a continuously leaking tap.
 
@@ -11,6 +11,17 @@ this board's job is to deliver a clean, correctly band-limited signal.
 - **Output:** 15 mV – 1.03 V, suitable for a bare ESP-12 A0 (0–1.0 V full scale)
 - **Passband:** ~194 Hz – 1.94 kHz
 - **Envelope time constant:** 0.32 s
+
+---
+
+## Use Case
+
+This vibration sensor will be used to detect the leakage of water inside a cistern of a toilet flush. 
+This would be run on rechargeable batteries and hence should last a long time before requiring a battery recharge. This presents a few challenges as below:
+
+- The detection circuit itself takes around 1mA while idle. This is too much for a battery which is expected to last many months. Ideally its consumption should be < 100uA.
+- The leakage may be continuous or may be intermittent. If there's a small amount of leakage then water will keep seeping through and the cistern will trigger a refill every time the water goes below a certain level. When the refill happens, I expect the vibration sensor to trigger. The slow leakage may not trigger the vibration sensor - even if does, it might be difficult to differentiate it from noise.
+- The circuit should be able to sleep most of the time while waking up either periodically or on activity in the vibration circuit.
 
 ---
 
