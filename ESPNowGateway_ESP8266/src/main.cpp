@@ -93,7 +93,8 @@ long last_time = 0; // last time when health check was published
 long last_message_count = 0;//stores the last count with which message rate was calculated
 long lastReconnectAttempt = 0; // Keeps track of the last time an attempt was made to connect to MQTT
 short mqtt_publish_fails = 0; //tracks the no of times MQTT publishing has failed even though the MQTT client was connected
-bool initilized = false; // flag to track if initialisation of the ESP has finished. At present it only handles tracking of the "init" message published on startup
+bool initialized = false; // flag to track if initialisation of the ESP has finished. At present it only handles tracking of the "init" message published on startup
+static int last_wifi_channel = 0;
 extern "C"
 { 
   #include <lwip/icmp.h> // needed for icmp packet definitions , not sure what was this?
@@ -151,9 +152,13 @@ const char index_html_ota[] PROGMEM = R"rawliteral(
   </form><br>
 </body></html>)rawliteral";
 
-const char index_html[] PROGMEM = R"rawliteral(
-<!DOCTYPE HTML><html><head>
-  <title>ESPNOW Gateway</title>
+// The page is streamed to the client in the fragments below, the device name/heading and the table
+// rows are printed in between them. Do not copy these PROGMEM buffers into a String, they must be
+// read with FPSTR()/pgm_read_* else the flash contents get read as garbage.
+const char html_head[] PROGMEM = R"rawliteral(<!DOCTYPE HTML><html><head>
+  <title>)rawliteral";
+
+const char html_style[] PROGMEM = R"rawliteral(</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     html {font-family: Arial, sans-serif; display: inline-block; text-align: center;}
@@ -168,7 +173,9 @@ const char index_html[] PROGMEM = R"rawliteral(
     .device-filter button {padding: 6px 12px;}
   </style>
   </head><body>
-  <h1>HEADING</h1>
+  <h1>)rawliteral";
+
+const char html_table_start[] PROGMEM = R"rawliteral(</h1>
   <div class="device-filter">
     <label for="device-filter-input">Device name:</label>
     <input id="device-filter-input" type="text" placeholder="Enter device name">
@@ -192,9 +199,9 @@ const char index_html[] PROGMEM = R"rawliteral(
       <th>Char Value1</th>
       <th>Char Value2</th>
     </tr>
-    <!--TABLEROWS-->
-  </table>
-  <!--SCRIPT-->
+)rawliteral";
+
+const char html_table_end[] PROGMEM = R"rawliteral(  </table>
   <script>
     var activeDeviceFilter = '';
 
@@ -225,7 +232,9 @@ const char index_html[] PROGMEM = R"rawliteral(
       cell.textContent = formatClientTime();
     });
   </script>
-  </body></html>)rawliteral";
+)rawliteral";
+
+const char html_end[] PROGMEM = R"rawliteral(  </body></html>)rawliteral";
 
 const char ws_script[] PROGMEM = R"rawliteral(
   <script>
@@ -499,58 +508,65 @@ void update_gateway_stats()
 
 /*
  * creates data for health message and publishes it
- * takes bool param init , if true then publishes the startup message else publishes the health check message
+ * takes bool param init , if true then publishes the startup message else skips it. It always publishes the normal health check message
  */
 bool publishHealthMessage(bool init=false)
 {
   char publish_topic[65] = "";
   String str_msg="";
+  bool return_value = false;
   update_gateway_stats();
+
+  JsonDocument msg_json;//It is recommended to create a new obj than reuse the earlier one by ArduinoJson
 
   if(init)
   {
      // publish the init message
-    JsonDocument init_msg_json;//It is recommended to create a new obj than reuse the earlier one by ArduinoJson
-    init_msg_json["version"] = compile_version;
-    init_msg_json["tot_memKB"] = (float)ESP.getFlashChipSize() / 1024.0;
-    init_msg_json["mac"] = gateway.str_mac;
-    init_msg_json["macAP"] = gateway.str_macAP;
-    init_msg_json["wifiChannel"] = gateway.wifi_channel;
+    msg_json["version"] = compile_version;
+    msg_json["tot_memKB"] = (float)ESP.getFlashChipSize() / 1024.0;
+    msg_json["mac"] = gateway.str_mac;
+    msg_json["macAP"] = gateway.str_macAP;
+    msg_json["wifiChannel"] = gateway.wifi_channel;
     strcpy(publish_topic,MQTT_TOPIC);
     strcat(publish_topic,"/init");
     str_msg="";
-    serializeJson(init_msg_json,str_msg);
-    return publishToMQTT(str_msg.c_str(),publish_topic,true);
-  }
-  else
-  {
-    JsonDocument msg_json;
-    msg_json["uptime"] = gateway.uptime; // uptime in minutes
-    msg_json["mem_freeKB"] = serialized(String((float)gateway.free_mem_KB,0));//Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
-    msg_json["msg_count"] = gateway.msg_count;
-    msg_json["queue_len"] = gateway.queue_length;
-    last_message_count = gateway.msg_count;//reset the count
-    msg_json["msg_rate"] = serialized(String(gateway.msg_rate,1));//format with 1 decimal places, Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
-
-    // create a path for this specific device which is of the form MQTT_BASE_TOPIC/<master_id> , master_id is usually the mac address stripped off the colon eg. MQTT_BASE_TOPIC/2CF43220842D
-    strcpy(publish_topic,MQTT_TOPIC);
-    strcat(publish_topic,"/state");
     serializeJson(msg_json,str_msg);
-    if(publishToMQTT(str_msg.c_str(),publish_topic,false))
-    {
-      // publish the wifi message , I am publishing this everytime because it also has rssi
-      String strIP_address = WiFi.localIP().toString();
-      JsonDocument wifi_msg_json;//It is recommended to create a new obj than reuse the earlier one by ArduinoJson
-      wifi_msg_json["ip_address"] = strIP_address;
-      wifi_msg_json["rssi"] = WiFi.RSSI();
-      strcpy(publish_topic,MQTT_TOPIC);
-      strcat(publish_topic,"/wifi");
-      str_msg="";
-      serializeJson(wifi_msg_json,str_msg);
-      return publishToMQTT(str_msg.c_str(),publish_topic,true);
-   }
+    return_value = publishToMQTT(str_msg.c_str(),publish_topic,true);
   }
-  return false;//control will never come here
+  if (!return_value)
+    DPRINTLN("Failed to publish init message:" + str_msg);
+  
+  // clear the old object for reuse for the next message
+  msg_json.clear();
+  msg_json["uptime"] = gateway.uptime; // uptime in minutes
+  msg_json["mem_freeKB"] = serialized(String((float)gateway.free_mem_KB,0));//Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
+  msg_json["msg_count"] = gateway.msg_count;
+  msg_json["queue_len"] = gateway.queue_length;
+  last_message_count = gateway.msg_count;//reset the count
+  msg_json["msg_rate"] = serialized(String(gateway.msg_rate,1));//format with 1 decimal places, Ref:https://arduinojson.org/v6/how-to/configure-the-serialization-of-floats/
+
+  // create a path for this specific device which is of the form MQTT_BASE_TOPIC/<master_id> , master_id is usually the mac address stripped off the colon eg. MQTT_BASE_TOPIC/2CF43220842D
+  strcpy(publish_topic,MQTT_TOPIC);
+  strcat(publish_topic,"/state");
+  serializeJson(msg_json,str_msg);
+  return_value &= publishToMQTT(str_msg.c_str(),publish_topic,false);
+  if (!return_value)
+    DPRINTLN("Failed to publish state message:" + str_msg);
+
+  // publish the wifi message , I am publishing this everytime because it also has rssi
+  String strIP_address = WiFi.localIP().toString();
+  msg_json.clear();
+  msg_json["ip_address"] = strIP_address;
+  msg_json["rssi"] = WiFi.RSSI();
+  strcpy(publish_topic,MQTT_TOPIC);
+  strcat(publish_topic,"/wifi");
+  str_msg="";
+  serializeJson(msg_json,str_msg);
+  return_value &= publishToMQTT(str_msg.c_str(),publish_topic,true);
+  if (!return_value)
+    DPRINTLN("Failed to publish wifi message:" + str_msg);
+
+  return return_value;
 }
 
 
@@ -604,48 +620,50 @@ void prepare_for_OTA(uint8_t peerAddress[])
   DPRINTLN("Device prepared for sending OTA messages");
 }
 
+// Appends one HTML table row for the given message to the response stream
+static void print_table_row(AsyncResponseStream *response, const espnow_message& msg) {
+  response->print(F("<tr><td data-client-time></td>"));
+  response->printf("<td>%lu</td>", msg.message_id);
+  response->printf("<td>%s</td>", msg.device_name);
+  response->printf("<td>%d</td>", (int)msg.msg_type);
+  response->printf("<td>%s</td>", msg.sender_mac);
+  response->printf("<td>%d</td><td>%d</td><td>%d</td><td>%d</td>",
+                   msg.intvalue1, msg.intvalue2, msg.intvalue3, msg.intvalue4);
+  response->printf("<td>%.2f</td><td>%.2f</td><td>%.2f</td><td>%.2f</td>",
+                   msg.floatvalue1, msg.floatvalue2, msg.floatvalue3, msg.floatvalue4);
+  response->printf("<td>%s</td><td>%s</td>", msg.chardata1, msg.chardata2);
+  response->print(F("</tr>\n"));
+}
+
+// Streams the common page skeleton, the rows of the given buffer are printed inside the table
+template <typename QUEUE>
+static void send_message_page(AsyncWebServerRequest *request, const char* heading, const QUEUE& queue, bool with_ws) {
+  AsyncResponseStream *response = request->beginResponseStream("text/html");
+  response->print(FPSTR(html_head));
+  response->print(DEVICE_NAME);
+  response->print(FPSTR(html_style));
+  response->print(heading);
+  response->print(FPSTR(html_table_start));
+  // print the newest message first
+  for (int i = (int)queue.size() - 1; i >= 0; i--) {
+    print_table_row(response, queue[i]);
+  }
+  response->print(FPSTR(html_table_end));
+  if (with_ws) {
+    response->print(FPSTR(ws_script));
+  }
+  response->print(FPSTR(html_end));
+  request->send(response);
+}
+
 // Function to handle the root URL
 void handleRoot(AsyncWebServerRequest *request) {
-  String html = index_html;
-  html.replace("<!--SCRIPT-->", ws_script);
-  html.replace("ESPNOW Gateway", DEVICE_NAME);
-  html.replace("HEADING", DEVICE_NAME " - Processed Messages");
-  request->send(200, "text/html", html);
+  send_message_page(request, DEVICE_NAME " - Dashboard", processedMessages, true);
 }
 
-// Function to generate the HTML table rows
-String generate_pending_table_rows() {
-  String rows = "";
-  for (size_t i = 0; i < structQueue.size(); i++) {
-    const auto& msg = structQueue[i];
-    rows += "<tr>";
-    rows += "<td data-client-time></td>";
-    rows += "<td>" + String(msg.message_id) + "</td>";
-    rows += "<td>" + String(msg.device_name) + "</td>";
-    rows += "<td>" + String(msg.msg_type) + "</td>";
-    rows += "<td>" + String(msg.sender_mac) + "</td>";
-    rows += "<td>" + String(msg.intvalue1) + "</td>";
-    rows += "<td>" + String(msg.intvalue2) + "</td>";
-    rows += "<td>" + String(msg.intvalue3) + "</td>";
-    rows += "<td>" + String(msg.intvalue4) + "</td>";
-    rows += "<td>" + String(msg.floatvalue1) + "</td>";
-    rows += "<td>" + String(msg.floatvalue2) + "</td>";
-    rows += "<td>" + String(msg.floatvalue3) + "</td>";
-    rows += "<td>" + String(msg.floatvalue4) + "</td>";
-    rows += "<td>" + String(msg.chardata1) + "</td>";
-    rows += "<td>" + String(msg.chardata2) + "</td>";
-    rows += "</tr>";
-  }
-  return rows;
-}
-
-// Function to handle the root URL
+// Function to handle the queue URL
 void handle_queue(AsyncWebServerRequest *request) {
-  String html = index_html;
-  html.replace("ESPNOW Gateway", DEVICE_NAME);
-  html.replace("HEADING", DEVICE_NAME " - Queued Messages");
-  html.replace("<!--TABLEROWS-->", generate_pending_table_rows());
-  request->send(200, "text/html", html);
+  send_message_page(request, DEVICE_NAME " - Queued Messages", structQueue, false);
 }
 
 
@@ -759,6 +777,7 @@ void setup() {
   WiFi.hostname(hostname); // Set Hostname.  
 
   // Connect to the WiFi as a station device
+  DPRINTLN("Connecting to " + String(ssid) + " with hostname " + String(hostname));
   WiFi.begin(ssid, password);
   DPRINTLN("Setting as a Wi-Fi Station..");
   while (WiFi.status() != WL_CONNECTED) {
@@ -769,6 +788,7 @@ void setup() {
   DPRINTLN(WiFi.localIP());
   DPRINT("Wi-Fi Channel: ");
   DPRINTLN(WiFi.channel());
+  last_wifi_channel = WiFi.channel();//store the channel number for future comparison
   WiFi.setAutoReconnect(true);
   
   //mdns is necessary to broadcast the hostname.local address
@@ -850,7 +870,7 @@ void setup() {
   
   reconnectMQTT(); //connect to MQTT before publishing the startup message
   if(publishHealthMessage(true)) //publish the startup message
-    initilized = true;
+    initialized = true;
   #if USING(MOTION_SENSOR)
   if(!motion_sensor.begin(MOTION_SENSOR_NAME)) //initialize the motion sensor
     DPRINTLN("Failed to initialize motion sensor");
@@ -945,24 +965,36 @@ void do_ota_server()
 
 }
 
+/*
+ * Checks if the WiFi channel has changed from last time, returns true if it has, false otherwise.
+ */
+bool is_wifi_channel_changed() {
+  return WiFi.channel() != last_wifi_channel; // no side effects
+}
+
+/*
+ * Performs periodic health checks and publishes health messages.
+ * If the WiFi channel has changed, it triggers the publishing of a fresh device info message.
+ */
 void do_health_check()
 {
-  // try to publish health message irrespective of the state of espnow messages
   if(millis() - last_time > HEALTH_INTERVAL)
   {
-    if(initilized)
-    {
-      //publish the health message
-      publishHealthMessage();
-    }
-    else
-    // It might be possible when the ESP comes up MQTT is down, in that case an init message will not get published in setup()
-    // The statement below will check and publish the same , only once
+    bool channel_changed = is_wifi_channel_changed();
+    if(!initialized || channel_changed)
     {
       if(publishHealthMessage(true))
-        initilized = true;
+      {
+        initialized = true;
+        if(channel_changed)
+          last_wifi_channel = WiFi.channel(); // commit only after a successful publish
+      }
     }
-    last_time = millis(); // This is reset irrespective of a successful publish else the main loop will continously try to publish this message
+    else
+    {
+      publishHealthMessage();
+    }
+    last_time = millis();
   }
 }
 
@@ -1073,6 +1105,7 @@ void process_message()
   }
 
 }
+
 
 /*
  * This is the main loop where the code waits for the delivery of the message sent
