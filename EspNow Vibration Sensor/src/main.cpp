@@ -1,7 +1,29 @@
-
 /*
- * Sketch for a vibration sensor based ESP. The ESP wakes up due to a pulse from the vibration sensor
- * It then holds its power irrespective of the state of the vibratoon sensor, It sends a message and then cuts power to itself
+ * This circuit and sketch is a water leakage sensor using a piezo, op amp and ESP. ESP transmits messages using espnow and not WiFi
+ * The whole piezo sensor circuit gets it's power from the ESP GPIO pin. 
+ * The flow is : ESP wakes up, powers the piezo sensor/op amp circuit, reads the ADC values , determines if a vibration is present or not based on its value.
+ * If ADC value is above a certain threshold, it sends a message with ADC value as well as another value indicating vibration status. It then sleeps to conserve power.
+ * If there is no vibration detected, it still sends a health check message and then goes to sleep to conserve power.
+ * The whole circuit is mounted inside a flush tank which runs water when flushed and also runs water in an event of a leakage. The purpose
+ * of this circuit is to detect the leakage and report that as an espnow message so that the corresponding automation in home assistant can take action.
+ *
+ * Detection logic (deliberately kept simple here, actual leak-vs-normal-flush decision is left to Home Assistant):
+ * - ESP8266 deep sleep can only be woken by a timer, not by an external interrupt, so this is a polling design.
+ * - When idle (no vibration seen), the ESP wakes every SLEEP_DURATION seconds, takes a burst of ADC samples, sends a
+ *   heartbeat/idle message (intvalue1 = VIB_STATUS_IDLE) and goes back to deep sleep.
+ * - As soon as vibration is detected, the ESP stays awake (no deep sleep) and keeps sampling. It sends an "ongoing"
+ *   update (intvalue1 = VIB_STATUS_ONGOING) every VIBRATION_UPDATE_INTERVAL_MS with the elapsed duration, so Home
+ *   Assistant can decide whether this is a normal ~30s flush or a longer leak condition.
+ * - Once the signal has been below the noise threshold for VIBRATION_STOP_CONFIRM_COUNT consecutive checks, the
+ *   event is considered over, a final message is sent (intvalue1 = VIB_STATUS_ENDED) with the total duration, and
+ *   the ESP goes back to deep sleep.
+ *
+ * Message field usage (espnow_message):
+ * - intvalue1  : vibration status - VIB_STATUS_IDLE(0) / VIB_STATUS_ONGOING(1) / VIB_STATUS_ENDED(2)
+ * - intvalue2  : duration in seconds of the current/just-ended vibration event (0 for idle heartbeat)
+ * - intvalue3  : millis() at time of sending, for debugging purposes
+ * - floatvalue1: last sampled raw ADC vibration level (0-1023)
+ */
 
 /*
 // you can use the macros below to pass a string value in the build flags and use the same in the code.
@@ -14,15 +36,8 @@
 #endif
 */
 // ************ HASH DEFINES *******************
-#define MSG_WAIT_TIMEOUT 30 // time in ms to wait for receiving any incoming messages to this ESP , typically 10-40 ms
-#define OTA_TIMEOUT 180 // time in seconds beyond which to come out of OTA mode
 #define VERSION "1.0"
 //Types of messages decoded via the signal pins
-#define SENSOR_NONE 0
-#define SENSOR_OPEN 1
-#define SENSOR_CLOSE 2
-#define MSG_ON 1 //payload for ON
-#define MSG_OFF 0//payload for OFF
 // ************ HASH DEFINES *******************
 
 #include <Arduino.h>
@@ -34,10 +49,6 @@
 #include "espnowMessage.h" // for struct of espnow message
 #include "myutils.h" //include utility functions
 
-#if USING(OTA) // EEPROM is needed when OTA is used so force define it , if not defined
-  #include <ArduinoOTA.h> 
-  #define EEPROM_STORE            IN_USE
-#endif
 #if USING(EEPROM_STORE)
   #define EEPROM_SIZE 64 // number of bytes to be allocated to EEPROM , for some reason even though I am using only 4+4 8 bytes, it reads back junk values so I increased it to 64
   // havent tried lower than 64
@@ -47,21 +58,21 @@
 // ************ GLOBAL OBJECTS/VARIABLES *******************
 const char* ssid = WiFi_SSID; // comes from config.h
 const char* password = WiFi_SSID_PSWD; // comes from config.h
-short CURR_MSG = SENSOR_NONE;//This stores the message type deciphered from the states of the signal pins
-ADC_MODE(ADC_VCC);//connects the internal ADC to VCC pin and enables measuring Vcc
+// Note: ADC_MODE(ADC_VCC) is intentionally NOT used here, see note in Config.h - A0 is used to read the piezo/op-amp signal instead
 const char compile_version[] = VERSION " " __DATE__ " " __TIME__; //note, the 3 strings adjacent to each other become pasted together as one long string
+
+// vibration status values sent in myData.intvalue1
+typedef enum {
+  VIB_STATUS_IDLE    = 0, // no vibration detected, this is a periodic heartbeat message
+  VIB_STATUS_ONGOING = 1, // vibration event in progress, sent periodically while it continues
+  VIB_STATUS_ENDED   = 2  // vibration event has just ended, message carries the total duration
+} vibration_status_t;
 
 espnow_message myData;
 volatile bool msgReceived = false; //flag to indicate if the ESP has received any message during its wake up cycle
-#if USING(OTA) 
-volatile bool ota_msg = false; // indicates if the esp has received a OTA message
-volatile espnow_mode_t ota_mode = MODE_NORMAL; // mode in which the ESP starts, this is read from EEPROM in setup()
-#endif
 unsigned long start_time = millis(); // keeps track of the time ESP started, can be changed in between though
 const unsigned short eeprom_start_add = sizeof(int); // starting address of EEPROm for use of this ESP. This is determined by the space espnowcontroller 
-bool msgSent = false ; // indicates if the message is sent when ESP wakes up so that it doesnt send any other message till it kills power to itself
-bool powered_down = false; // indicates if the ESP has been powered down after doing its job
-bool kill_power = false; // flag to indicate if power should be killed to the ESP
+const unsigned long sleep_duration = SLEEP_DURATION * 1e6; // deep sleep duration in microseconds
 
 // takes to store its data which at present is only the WiFi channel number as integer, the rest till EEPROM_SIZE is available to this ESP to store its data
 #if USING(SECURITY)
@@ -84,22 +95,12 @@ esp_now_send_cb_t OnDataSent([](uint8_t *mac_addr, uint8_t status) {
 });
 
 /*
- * Callback called on receiving a message. if msg type is OTA then set relevant flags else just log the message
+ * Callback called on receiving a message. This device does not act on incoming messages, it just logs them.
 */
 void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
   espnow_message msg;
   memcpy(&msg, incomingData, sizeof(msg));
-  #if USING(OTA)
-  if(!ota_msg && ota_mode!= MODE_OTA_START) 
-  {
-    msgReceived = true;
-    if(msg.msg_type == ESPNOW_OTA)
-      ota_msg = true;
-    DPRINTF("Processing msg:%lu,%u,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.msg_type,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
-  }
-  else // ignore any messages if we are already in OTA mode
-  #endif
-    DPRINTF("Ignoring msg:%lu,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
+  DPRINTF("OnDataRecv:%lu,%d,%d,%d,%d,%f,%f,%f,%f,%s,%s\n",msg.message_id,msg.intvalue1,msg.intvalue2,msg.intvalue3,msg.intvalue4,msg.floatvalue1,msg.floatvalue2,msg.floatvalue3,msg.floatvalue4,msg.chardata1,msg.chardata2);
 };
 
 void printInitInfo()
@@ -116,324 +117,163 @@ void printInitInfo()
 
 }
 
-#if USING(OTA)
-void setup_OTA()
+
+/*
+ * Takes a burst of ADC readings (ADC_SAMPLE_COUNT samples, ADC_SAMPLE_INTERVAL_MS apart) from the piezo/op-amp
+ * circuit on A0 and returns the peak (max) raw value seen. A peak/max is used rather than a single reading or an
+ * average because the piezo output is expected to be an AC-like signal, so a single sample could easily land on
+ * a zero-crossing and miss a genuine vibration.
+ */
+int sampleVibrationLevel()
 {
-  WiFi.mode(WIFI_AP_STA);
-  WiFi.config(ESP_IP_ADDRESS, default_gateway, subnet_mask);//from secrets.h
-  String device_name = DEVICE_NAME;
-  device_name.replace("_","-");//hostname dont allow underscores or spaces
-  WiFi.hostname(device_name.c_str());// Set Hostname.
-  WiFi.begin(ssid, password);
-  DPRINTLN("Setting as a Wi-Fi Station..");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    DPRINT(".");
-  }
-  DPRINT("Station IP Address: ");
-  DPRINTLN(WiFi.localIP());
-  WiFi.setAutoReconnect(true);
-  
-  ArduinoOTA.onStart([]() {
-    start_time = millis();//reset the start time now that we've started OTA
-    String type;
-    if (ArduinoOTA.getCommand() == U_FLASH) {
-      type = "sketch";
-    } else { // U_FS
-      type = "filesystem";
-    }
-
-    // NOTE: if updating FS this would be the place to unmount FS using FS.end()
-    DPRINTLN("Start updating " + type);
-  });
-  ArduinoOTA.onEnd([]() {
-    DPRINTLN("\nEnd");
-  });
-  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    DPRINTF("Progress: %u%%\r", (progress / (total / 100)));
-  });
-  ArduinoOTA.onError([](ota_error_t error) {
-    DPRINTF("Error[%u]: ", error);
-    if (error == OTA_AUTH_ERROR) {
-      DPRINTLN("Auth Failed");
-    } else if (error == OTA_BEGIN_ERROR) {
-      DPRINTLN("Begin Failed");
-    } else if (error == OTA_CONNECT_ERROR) {
-      DPRINTLN("Connect Failed");
-    } else if (error == OTA_RECEIVE_ERROR) {
-      DPRINTLN("Receive Failed");
-    } else if (error == OTA_END_ERROR) {
-      DPRINTLN("End Failed");
-    }
-  });
-  ArduinoOTA.begin();
-  // Now that we've started in OTA mode, set the EEPROM flag to MODE_OTA_END so that when we start up in ESPNOW mode the next time, we know we are coming out of OTA mode
-  // This is irrespective of whether OTA setup completes successfully or not
-  // be aware dont set ota_mode to this future mode her, we're still in ota_mode = MODE_OTA_START
-  espnow_mode_t mode  = MODE_OTA_END;
-  EEPROM.write(eeprom_start_add,mode);
-  EEPROM.commit();
-  EEPROM.get(eeprom_start_add,mode);
-  if(mode != MODE_OTA_END)
+  int peak = 0;
+  for(short i=0;i<ADC_SAMPLE_COUNT;i++)
   {
-    DPRINTFLN("OTA Flag write mismatch. written:%u , read back:%u",MODE_OTA_END,mode);
+    int reading = analogRead(A0);
+    if(reading > peak)
+      peak = reading;
+    delay(ADC_SAMPLE_INTERVAL_MS);
   }
-  DPRINTLN("OTA set up successfully");
-
+  return peak;
 }
-#endif
 
-void send_message(msg_type_t msg_type, bool acknowledge = true)
+/*
+ * Builds and sends an espnow_message reporting the current vibration status.
+ * status        : VIB_STATUS_IDLE / VIB_STATUS_ONGOING / VIB_STATUS_ENDED
+ * duration_secs : elapsed (or total, for ENDED) duration of the vibration event, 0 for an idle heartbeat
+ * adc_level     : last sampled raw ADC vibration level (0-1023)
+ */
+void send_message(vibration_status_t status, unsigned long duration_secs, int adc_level, bool acknowledge = true)
 {
-  myData.msg_type = msg_type;
-  if(msg_type == ESPNOW_SENSOR)
-  {
-    //Read the value of the sensor on the input pins asap , ATtiny can then remove the signal and the ESP wont care
-    if(digitalRead(SIGNAL_PIN) == HIGH)
-      CURR_MSG = SENSOR_OPEN;
-    else if(digitalRead(SIGNAL_PIN) == LOW)
-      CURR_MSG = SENSOR_CLOSE;
-    //else nothing to do, invalid mode
-    //DPRINTLN(digitalRead(SIGNAL_PIN));
-
-    DPRINTLN("initializing espnow");
-    initilizeESP(ssid,MY_ROLE);
-
-    // register callbacks for events when data is sent and data is received
-    esp_now_register_send_cb(OnDataSent);
-    esp_now_register_recv_cb(OnDataRecv);
-    #if USING(SECURITY)
-      refreshPeer(gatewayAddress,key,RECEIVER_ROLE);
-    #else
-      refreshPeer(gatewayAddress,NULL,RECEIVER_ROLE);
-    #endif
-
-    // populate the values for the message
-    // If devicename is not given then generate one from MAC address stripping off the colon
-    #ifndef DEVICE_NAME
-      String wifiMacString = WiFi.macAddress();
-      wifiMacString.replace(":","");
-      snprintf(myData.device_name, 16, "%s", wifiMacString.c_str());
-    #else
-      strcpy(myData.device_name,DEVICE_NAME);
-    #endif
-    strcpy(myData.sender_mac,WiFi.macAddress().c_str()); //WiFi.softAPmacAddress()
-    myData.intvalue1 = (CURR_MSG == SENSOR_OPEN? MSG_ON:MSG_OFF);
-    DPRINTLN(myData.intvalue1);
-    myData.intvalue2 = ESP.getVcc();
-    myData.floatvalue1 = 0;
-    myData.chardata1[0] = '\0';
-    strncpy(myData.chardata2,compile_version,15);//only copy the first 15 chars as compile_version is longer
-    myData.chardata2[15] = '\0';//add the null character else it will result in overflow of memory
-
-  }
-  #if USING(OTA)
-  else if(msg_type == ESPNOW_OTA)
-  {
-    myData.intvalue1 = ota_mode; // ota mode
-    myData.intvalue2 = OTA_TIMEOUT; // ota timeout time in sec
-    myData.floatvalue1 = OTA_TIMEOUT - (millis()- start_time)/1000; // time remaining for ota mode in secs
-    strcpy(myData.chardata1,ESP_IP_ADDRESS.toString().c_str());
-    strcpy(myData.chardata2,"");
-  }
-  #endif
-  //generate a random value for the message id. It seems there is nothing I can do to genrate a random value as all random values need a seed
+  myData.msg_type = ESPNOW_SENSOR;
+  myData.intvalue1 = status;
+  myData.intvalue2 = duration_secs;
+  myData.floatvalue1 = adc_level;
+  //generate a random value for the message id. It seems there is nothing I can do to generate a random value as all random values need a seed
   // and that for a ESP is always constant. Hence I am trying to get a combination of the following 4 things, micros creates an almost true random number
-  myData.message_id = WiFi.RSSI();// + micros();
-  myData.intvalue3 = millis();// for debug purpuses, send the millis till this instant in intvalue3
+  myData.intvalue3 = 0;
   myData.intvalue4 = 0;
   myData.floatvalue2 = 0;
   myData.floatvalue3 = 0;
   myData.floatvalue4 = 0;
-    
+  //Set other values to send
+  strcpy(myData.sender_mac,WiFi.macAddress().c_str()); //WiFi.softAPmacAddress()
+  // If devicename is not given then generate one from MAC address stripping off the colon
+  #ifndef DEVICE_NAME
+    String wifiMacString = WiFi.macAddress();
+    wifiMacString.replace(":","");
+    snprintf(myData.device_name, 16, "%s", wifiMacString.c_str());
+  #else
+    strcpy(myData.device_name,DEVICE_NAME);
+  #endif
+  myData.chardata1[0] = '\0';
+  snprintf(myData.chardata2, MAX_CHAR_DATA_LEN, "%s", compile_version);
+  myData.message_id = millis();
+
   bool result = sendESPnowMessage(&myData,gatewayAddress,1,acknowledge);
   if (result == 0) {
     DPRINTLN("Delivered with success");}
   else {DPRINTFLN("Error sending/receipting the message, error code:%d",result);}
+
+  
 }
 
-/*
-* Turns LED state after a predermined total time, kills time via delay() if ESP hasnt been ON for that certain time
-* state = 0 -> OFF , state = 1 -> ON , state = 2 -> toggle
-*/
-void set_led(char state)
-{
-  #if(USING(STATUS_LED))
-    if(state == 0)
-    {
-      digitalWrite(LED_GPIO,LED_INVERTED?HIGH:LOW); // OFF
-    }
-    else if(state == 1)
-    {
-      digitalWrite(LED_GPIO,LED_INVERTED?LOW:HIGH); // ON
-    }
-    else if(state == 2)
-    {
-      if(digitalRead(LED_GPIO))
-      {
-        digitalWrite(LED_GPIO,LED_INVERTED?HIGH:LOW); // toggle from ON to OFF
-      }
-      else
-      {
-        digitalWrite(LED_GPIO,LED_INVERTED?LOW:HIGH); // toggle from OFF to ON
-      }
-    }
-  #endif
-}
-
-/*
-* Processes incoming messages, for now its only OTA msg type, In future can code for more events
-* For future events I will have to collect incoming messages in a queue and then process them
-*/
-void process_messages()
-{
-  #if USING(OTA)
-  if(ota_msg)
-  {
-    // write MODE_OTA_START in EEPROM and restart the ESP
-    ota_mode  = MODE_OTA_START;
-    EEPROM.write(eeprom_start_add,ota_mode);
-    EEPROM.commit();
-    //DPRINTFLN("OTA Flag read back from EEPROM %u",EEPROM.get(eeprom_start_add,ota_mode));
-    send_message(ESPNOW_OTA,false);
-    DPRINTLN("msg sent to Gateway to confirming receipt of OTA message. Going to restart the ESP for OTA mode...");
-    DFLUSH();
-    ESP.restart();
-  }
-  #endif
-  msgReceived = false; //now that we've processed the message , clear the flag
-  // You can code for future events here
-}
-
-/*
-* scan for received messages
-*/
-void scan_for_messages()
-{
-  // Wait for some time to see if we haev any service message for this ESP
-  for(byte i=0;i<MSG_WAIT_TIMEOUT;i++)
-  {
-    delay(1);
-    if(msgReceived)
-    {
-      process_messages();
-      break;
-    }
-    yield();
-  }
-}
 
 void setup() {
-  //Set the HOLD pin HIGH so that the ESP maintains power to itself. We will set it to low once we're done with the job, terminating power to ESP
-  pinMode(HOLD_PIN, OUTPUT);
-  digitalWrite(HOLD_PIN, HOLDING_LOGIC);  // set HOLD_PIN to HOLDING_LOGIC to keep the ESP ON
-
-  if(LED_GPIO == 1) // Rx pin is GPIO1
-  {
-    pinMode(LED_GPIO, FUNCTION_3);//Because we're using Rx & Tx as inputs here, we have to set the output type
-  }
-  pinMode(LED_GPIO, OUTPUT);
-
-  if(SIGNAL_PIN == 1) // Rx pin is GPIO1
-  {
-    DBEGIN(115200, SERIAL_8N1, SERIAL_TX_ONLY); // we can only use Tx as serial as Rx is being used as an input pin
-    pinMode(SIGNAL_PIN, FUNCTION_3);//Because we're using Rx & Tx as inputs here, we have to set the input type
-  }
-  else
-  {
-    DBEGIN(115200);
-  }
-  pinMode(SIGNAL_PIN, INPUT);// This cannot be pullup else the input will always be seen as HIGH when the MOSFET is OFF. As this is tied to MOSFET, it is never floating
+  DBEGIN(115200);
+  DPRINTLN();
   printInitInfo();
+  pinMode(SENSOR_POWER_PIN,OUTPUT);
+  digitalWrite(SENSOR_POWER_PIN,SENSOR_POWER_LOGIC);//power up the piezo/op-amp sensor circuit
+  delay(20);//give the sensor circuit a little time to settle before it's read
+    
   setCustomMAC(customMACAddress,true);
 
-  //Initialize EEPROM , this is used to store the channel no for espnow in the memory, only stored when it changes which is rare
+  DPRINTLN("initializing espnow");
   #if USING(EEPROM_STORE)
-  EEPROM.begin(EEPROM_SIZE);
+    //Initialize EEPROM , this is used to store the channel no for espnow in the memory, only stored when it changes which is rare
+    EEPROM.begin(EEPROM_SIZE);// size of the EEPROM to be allocated, 16 is the minimum
+    initilizeESP(ssid,MY_ROLE,DEFAULT_CHANNEL);
+  #else // this will not reply on a SSID and channel stored in EEPROM
+    initilizeESP(DEFAULT_CHANNEL,MY_ROLE,WIFI_STA);
   #endif
-  // Also used for storing OTA flag
-  #if USING(OTA)
-  ota_mode = EEPROM.get(eeprom_start_add,ota_mode);
-  DPRINTFLN("Starting up in %s mode",ota_mode== MODE_OTA_START?"OTA":"ESPNOW");
-  if(ota_mode == MODE_OTA_START)
-  {
-    setup_OTA();
-    set_led(1);
-    // TO DO : explore if there is a way to enable Serial Debug when in OTA mode even if it has been turned OFF in the Config.h
-  }
+
+  #if(USING(SECURITY))
+    esp_now_set_kok(kok, 16);
   #endif
-  // this will also execute if we get any junk value which is possible if we've never written to EEPROM ever
+
+  // register callbacks for events when data is sent and data is received
+  esp_now_register_send_cb(OnDataSent);
+  esp_now_register_recv_cb(OnDataRecv);
+  #if(USING(SECURITY))
+    refreshPeer(gatewayAddress, key,RECEIVER_ROLE);
+  #else
+    refreshPeer(gatewayAddress, NULL,RECEIVER_ROLE);
+  #endif
   DPRINTLN("Setup complete");
 }
 
 /*
-  Blinks the LED at a certain interval as defined in the config
-*/
-void blink_led()
+ * Puts the sensor circuit to sleep and deep-sleeps the ESP for SLEEP_DURATION seconds. Never returns (ESP reboots on wake).
+ */
+void goToSleep()
 {
-  #if(USING(STATUS_LED))
-  long static last_toggle_time = millis();
-  if((millis() - last_toggle_time) > LED_BLINK_INTERVAL*1000)
-  {
-    set_led(2);
-    last_toggle_time = millis();
-  }
-
-  #endif
+  DPRINTFLN("Going to sleep for %d secs",SLEEP_DURATION);
+  digitalWrite(SENSOR_POWER_PIN,!SENSOR_POWER_LOGIC);//remove power to the sensor module to conserve battery while asleep
+  DFLUSH();
+  ESP.deepSleep(sleep_duration);
 }
 
+/*
+ * Runs once per boot (the ESP reboots after every deep sleep). Takes an initial reading and either reports an idle
+ * heartbeat and sleeps, or - if vibration is present - stays awake monitoring/reporting until the vibration ends.
+ */
 void loop() {
-  #if USING(OTA)
-  if(ota_mode== MODE_OTA_START) 
+  #if USING(TEST_MODE)
+  int adc_level = sampleVibrationLevel();
+  vibration_status_t status = adc_level > ADC_NOISE_THRESHOLD ? VIB_STATUS_ONGOING : VIB_STATUS_IDLE;
+  DPRINTFLN("Test mode, adc level:%d",adc_level);
+  send_message(status,0,adc_level);
+  delay(TEST_MESSAGE_INTERVAL_MS);
+  #else
+  int adc_level = sampleVibrationLevel();
+
+  if(adc_level <= ADC_NOISE_THRESHOLD)
   {
-    ArduinoOTA.handle();
-    // countdown to the max time you should remain in the OTA mode before going back to sleep
-    if((millis()- start_time) > OTA_TIMEOUT*1000)
-    {
-      set_led(0);
-      DPRINTLN("No OTA file received, timing out of OTA mode");
-      ota_mode = MODE_NORMAL; // This will make the code exit loop() by killing power to itself
-      DFLUSH();
-    }
+    // nothing going on, just send a heartbeat so Home Assistant knows the device is alive, then sleep
+    DPRINTFLN("Idle, adc level:%d",adc_level);
+    send_message(VIB_STATUS_IDLE,0,adc_level);
+    goToSleep();
   }
-  else
-  #endif
+
+  // vibration detected - stay awake and keep monitoring/reporting until it stops
+  unsigned long event_start = millis();
+  unsigned long last_update = event_start;
+  short idle_count = 0;
+  DPRINTFLN("Vibration started, adc level:%d",adc_level);
+  send_message(VIB_STATUS_ONGOING,0,adc_level);
+
+  while(idle_count < VIBRATION_STOP_CONFIRM_COUNT)
   {
-    if(!msgSent && !kill_power)
+    delay(VIBRATION_POLL_INTERVAL_MS);
+    adc_level = sampleVibrationLevel();
+    if(adc_level <= ADC_NOISE_THRESHOLD)
+      idle_count++;
+    else
+      idle_count = 0; // still vibrating, reset the stop-confirmation counter
+
+    if(millis() - last_update >= VIBRATION_UPDATE_INTERVAL_MS)
     {
-      long static last_msg_sent_time = 0;
-      if(((millis() - last_msg_sent_time) > 2000) || last_msg_sent_time == 0)
-      {
-        send_message(ESPNOW_SENSOR,true);
-        last_msg_sent_time = millis();
-      }
-      #if !USING(TEST_MODE) // If not testing mode only then set the flag as below
-        msgSent = true; //once a message is sent, set it to true, this will prevent any other message being sent as it takes some finite time to kill power to the ESP
-                        // hence loop() keeps executing and sending messages
-        kill_power = true; //as we're done with sending the message once, set the flag to kill the power.
-      #endif // else dont set the flag and the loop will keep sending the message
-    }
-    // I could keep the scan_for_messages() in the if block above so it executes only once but no harm in executing it repeatedly so letting it there
-    // scan for messages sent to this ESP via espnow , this could be any message, one being OTA type message
-    //scan_for_messages();
-    if(!msgReceived) //no messages are received to process, turn off led and go to sleep
-    {
-      #if USING(TEST_MODE)
-      blink_led();
-      if(millis() > 10000)
-        kill_power= true;
-      #endif
-      
-      if(!powered_down && kill_power) // This check is needed because it takes a finite time for the ESP to power down and the ESP keeping looping in the meantime repeating execution of this block
-      {
-        set_led(0);
-        // Now you can kill power
-        DPRINTLN("powering down");
-        powered_down = true;
-        DFLUSH();
-        digitalWrite(HOLD_PIN, !HOLDING_LOGIC);  // cut power to the ESP
-      } // else nothing to do, keep looping if ESP is powered
+      unsigned long duration_secs = (millis() - event_start) / 1000;
+      DPRINTFLN("Vibration ongoing, duration:%lus, adc level:%d",duration_secs,adc_level);
+      send_message(VIB_STATUS_ONGOING,duration_secs,adc_level);
+      last_update = millis();
     }
   }
 
+  unsigned long total_duration_secs = (millis() - event_start) / 1000;
+  DPRINTFLN("Vibration ended, total duration:%lus",total_duration_secs);
+  send_message(VIB_STATUS_ENDED,total_duration_secs,adc_level);
+  goToSleep();
+  #endif
 }
