@@ -89,7 +89,6 @@ espnow_message myData;
 volatile bool msgReceived = false; //flag to indicate if the ESP has received any message during its wake up cycle
 unsigned long start_time = millis(); // keeps track of the time ESP started, can be changed in between though
 const unsigned short eeprom_start_add = sizeof(int); // starting address of EEPROm for use of this ESP. This is determined by the space espnowcontroller 
-const unsigned long sleep_duration = SLEEP_DURATION * 1e6; // deep sleep duration in microseconds
 
 // takes to store its data which at present is only the WiFi channel number as integer, the rest till EEPROM_SIZE is available to this ESP to store its data
 #if USING(SECURITY)
@@ -254,7 +253,7 @@ void goToSleep()
   digitalWrite(SENSOR_POWER_PIN,!SENSOR_POWER_LOGIC);//remove power to the sensor module to conserve battery while asleep
   turnOffRadio();
   DFLUSH();
-  ESP.deepSleep(sleep_duration);
+  ESP.deepSleep(SLEEP_DURATION * 1000000); // convert seconds to microseconds
 }
 
 /*

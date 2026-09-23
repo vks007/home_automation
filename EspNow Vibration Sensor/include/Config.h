@@ -32,10 +32,8 @@
   // signal is read via analogRead(A0), so no battery voltage is reported by this device.
   #define ADC_NOISE_THRESHOLD      30   // raw ADC reading (0-1023) above which a sample is considered "vibration present"
   #define ADC_SAMPLE_COUNT         2   // no of ADC samples taken in a burst to decide if vibration is present
-  #define ADC_SAMPLE_INTERVAL_MS   50    // delay in ms between samples within a burst
+  #define ADC_SAMPLE_INTERVAL_MS   10    // delay in ms between samples within a burst
   #define VIBRATION_POLL_INTERVAL_MS   5000  // how often (ms) to re-check the sensor while a vibration event is ongoing
-  #define VIBRATION_UPDATE_INTERVAL_MS 10000 // how often (ms) to send an "ongoing" update to the gateway during a vibration event
-  #define VIBRATION_STOP_CONFIRM_COUNT 3    // consecutive idle checks needed before declaring the vibration event has ended
   #define TEST_MESSAGE_INTERVAL_MS 1000 // how often (ms) to send sensor readings when TEST_MODE is enabled
 
 #else

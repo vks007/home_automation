@@ -36,7 +36,24 @@
 		},
 		{
 			"path": "../EspNow Vibration Sensor"
+		},
+		{
+			"path": "../Water Flow Meter"
+		},
+		{
+			"path": "../ESPNow Based Door Sensor/EspNow_DoorSensorV2"
+		},
+		{
+			"path": "../Battery Monitor"
+		},
+		{
+			"path": "../ButtonNow"
+		},
+		{
+			"path": "../include"
 		}
 	],
-	"settings": {}
+	"settings": {
+		"powershell.cwd": "ESPNowGateway_ESP8266"
+	}
 }
