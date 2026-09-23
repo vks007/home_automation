@@ -9,7 +9,7 @@
 
 #if (DEVICE == FF_FLUSH) 
   #pragma message "Compiling the program for the device: FF_FLUSH" 
-  #define TEST_MODE               IN_USE // defines if this code is being used during testing, in this case, the ESP does not power down
+  #define TEST_MODE               NOT_IN_USE // defines if this code is being used during testing, in this case, the ESP does not power down
   #define SERIAL_DEBUG            IN_USE
   #define SECURITY                NOT_IN_USE // using security or not to encrypt messages
   #define EEPROM_STORE            IN_USE // If EEPROM is in use or not , it is needed if using OTA
@@ -22,7 +22,7 @@
   #define SENSOR_POWER_PIN        4  // Pin which provides power to the rest of the sensor circuit
   #define SENSOR_POWER_LOGIC      HIGH // LOGIC LOW turns off the sensor power, LOGIC HIGH turns on the sensor power
   #define DEFAULT_CHANNEL         11
-  #define SLEEP_DURATION          15 // deep sleep duration in seconds between idle checks/heartbeats when no vibration is present
+  #define SLEEP_DURATION          30 // deep sleep duration in seconds between idle checks/heartbeats when no vibration is present
   uint8_t customMACAddress[] =    FF_FLUSH_AP_MAC; // from secrets.h . Prefer defining a custom MAC instead of actual device MAC so that the MAC doesnt change with device
   uint8_t gatewayAddress[] =      GATEWAY_FF_AP_MAC; //comes from secrets.h
 
@@ -30,9 +30,9 @@
   // Note: ADC_MODE(ADC_VCC) is NOT used in this sketch because the ESP8266 has a single ADC pin
   // and it cannot be shared between VCC measurement and an external analog signal (A0). The piezo/op-amp
   // signal is read via analogRead(A0), so no battery voltage is reported by this device.
-  #define ADC_NOISE_THRESHOLD      50   // raw ADC reading (0-1023) above which a sample is considered "vibration present"
-  #define ADC_SAMPLE_COUNT         1   // no of ADC samples taken in a burst to decide if vibration is present
-  #define ADC_SAMPLE_INTERVAL_MS   500    // delay in ms between samples within a burst
+  #define ADC_NOISE_THRESHOLD      30   // raw ADC reading (0-1023) above which a sample is considered "vibration present"
+  #define ADC_SAMPLE_COUNT         2   // no of ADC samples taken in a burst to decide if vibration is present
+  #define ADC_SAMPLE_INTERVAL_MS   50    // delay in ms between samples within a burst
   #define VIBRATION_POLL_INTERVAL_MS   5000  // how often (ms) to re-check the sensor while a vibration event is ongoing
   #define VIBRATION_UPDATE_INTERVAL_MS 10000 // how often (ms) to send an "ongoing" update to the gateway during a vibration event
   #define VIBRATION_STOP_CONFIRM_COUNT 3    // consecutive idle checks needed before declaring the vibration event has ended
